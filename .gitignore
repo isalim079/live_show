@@ -1,0 +1,29 @@
+# macOS System Files
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+
+# Swift Package Manager
+.build/
+.swiftpm/xcode/
+
+# Build Output & Release Artifacts
+build/
+*.dmg
+
+# Xcode & User Specific
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcworkspace/xcuserdata/
+xcuserdata/
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+
+# Logs & Diagnostics
+*.log
+.system_generated/
