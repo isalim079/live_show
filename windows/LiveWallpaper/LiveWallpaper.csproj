@@ -6,8 +6,22 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <Nullable>enable</Nullable>
     <UseWPF>true</UseWPF>
-    <ApplicationIcon />
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <AssemblyName>LiveWallpaper</AssemblyName>
+    <RootNamespace>LiveWallpaper</RootNamespace>
+    <Product>Live Show</Product>
+    <AssemblyTitle>Live Show</AssemblyTitle>
+    <Description>Live video wallpaper for Windows</Description>
+    <Version>1.3.0</Version>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="Assets\app.ico" />
+    <Content Include="Assets\app.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
 
 </Project>

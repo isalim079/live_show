@@ -9,11 +9,24 @@ Icon?
 
 # Swift Package Manager
 .build/
+.swiftpm/
 .swiftpm/xcode/
 
 # Build Output & Release Artifacts
 build/
 *.dmg
+*.exe
+*.zip
+*.msi
+*.app
+
+# Windows (.NET / WPF)
+windows/LiveWallpaper/bin/
+windows/LiveWallpaper/obj/
+windows/LiveWallpaper/**/publish/
+windows/Release_Build/
+windows/Output/
+windows/**/PublishOutputs*.txt
 
 # Xcode & User Specific
 *.xcodeproj/xcuserdata/
@@ -27,3 +40,14 @@ xcuserdata/
 # Logs & Diagnostics
 *.log
 .system_generated/
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*~
+
+# Python / local tooling caches
+__pycache__/
+.pytest_cache/
+*.pyc
