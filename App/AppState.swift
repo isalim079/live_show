@@ -43,7 +43,8 @@ public final class AppState: ObservableObject {
         self.wallpaperManager = wallpaperManager
 
         wireDependencies()
-        ScreenSaverManager.shared.installScreenSaver()
+        // Install or repair .saver when missing / codesign-invalid (silent lock-screen failures).
+        ScreenSaverManager.shared.ensureInstalled()
     }
 
     private func wireDependencies() {
@@ -113,20 +114,20 @@ public final class AppState: ObservableObject {
 
         wallpaperManager.reevaluatePolicy()
 
-        // Sync system wallpaper for all connected displays
-        // Also update the well-known ~/Library/Screen Savers/ActiveWallpaper.mp4 link
-        // so the .saver bundle can find it at lock screen time.
-        var primaryVideoURL: URL?
+        // Sync system static frames + native Aerial lock-screen asset for the primary wallpaper.
+        var primary: (Wallpaper, URL)?
         for display in displayManager.displays {
             if let assignment = store.assignment(for: display.id, displayName: display.name),
                let (wallpaper, url) = wallpaperManager.wallpaperResolver?(assignment.wallpaperID),
                let screen = displayManager.screen(for: display.id) {
                 SystemWallpaperSynchronizer.shared.sync(wallpaper: wallpaper, videoURL: url, for: screen)
-                if primaryVideoURL == nil { primaryVideoURL = url }
+                if primary == nil { primary = (wallpaper, url) }
             }
         }
-        if let videoURL = primaryVideoURL {
-            ScreenSaverManager.shared.updateActiveWallpaperLink(videoURL: videoURL)
+        if let (wallpaper, url) = primary {
+            Task { await self.syncLockScreen(wallpaper: wallpaper, videoURL: url) }
+        } else {
+            ScreenSaverManager.shared.refreshReadiness()
         }
 
         // Secondary reconciliation for display settling after system startup/wake
@@ -134,6 +135,7 @@ public final class AppState: ObservableObject {
             guard let self = self else { return }
             self.displayManager.refreshDisplays()
             self.wallpaperManager.reconcile()
+            ScreenSaverManager.shared.refreshReadiness()
         }
     }
 
@@ -154,8 +156,7 @@ public final class AppState: ObservableObject {
         if let screen = displayManager.screen(for: displayID) {
             SystemWallpaperSynchronizer.shared.sync(wallpaper: wallpaper, videoURL: resolvedURL, for: screen)
         }
-        // Keep the lock screen saver's video in sync
-        ScreenSaverManager.shared.updateActiveWallpaperLink(videoURL: resolvedURL)
+        Task { await self.syncLockScreen(wallpaper: wallpaper, videoURL: resolvedURL) }
     }
 
     public func setWallpaperForAllDisplays(_ wallpaper: Wallpaper, scalingMode: ScalingMode = .fill) {
@@ -169,8 +170,19 @@ public final class AppState: ObservableObject {
         }
         wallpaperManager.assignWallpaperToAllDisplays(wallpaper, resolvedURL: resolvedURL, scalingMode: scalingMode)
         SystemWallpaperSynchronizer.shared.syncAllScreens(wallpaper: wallpaper, videoURL: resolvedURL)
-        // Keep the lock screen saver's video in sync
-        ScreenSaverManager.shared.updateActiveWallpaperLink(videoURL: resolvedURL)
+        Task { await self.syncLockScreen(wallpaper: wallpaper, videoURL: resolvedURL) }
+    }
+
+    /// Encodes HEVC Aerial with visible progress, then refreshes Desktop+Idle diagnostics.
+    private func syncLockScreen(wallpaper: Wallpaper, videoURL: URL) async {
+        let ok = await ScreenSaverManager.shared.performLockScreenSync(
+            videoURL: videoURL,
+            wallpaperID: wallpaper.id,
+            title: wallpaper.title
+        )
+        if AerialLockScreenInstaller.isSupported && !ok {
+            AppLogger.wallpaper.error("Lock screen Aerial sync failed for \(wallpaper.title)")
+        }
     }
 
     public func toggleMute() {

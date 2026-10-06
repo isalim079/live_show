@@ -43,6 +43,15 @@ public enum FileUtils {
         return dir
     }
 
+    /// Cached HEVC Main-10 temporal encodes for native Aerial lock-screen playback.
+    public static var aerialCacheDirectory: URL {
+        let dir = appSupportDirectory.appendingPathComponent("AerialCache", isDirectory: true)
+        if !FileManager.default.fileExists(atPath: dir.path) {
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        return dir
+    }
+
     /// Checks if a file exists and is readable at the given URL.
     public static func isFileReadable(at url: URL) -> Bool {
         let path = url.path

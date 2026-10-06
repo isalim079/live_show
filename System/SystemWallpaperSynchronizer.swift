@@ -52,9 +52,18 @@ public final class SystemWallpaperSynchronizer {
     }
 
     /// Synchronizes the macOS system desktop image for a specific screen.
+    /// On macOS 26/27 with Aerial lock integration, skip applying JPEG Desktop so it does not
+    /// overwrite the native aerial wallpaper required for Golden Gate lock-screen animation.
     public func sync(wallpaper: Wallpaper, videoURL: URL, for screen: NSScreen) {
         Task { @MainActor in
-            guard let frameURL = await getOrGenerateFrame(for: videoURL, id: wallpaper.id) else {
+            // Always refresh the cached frame for cold-boot fallback, but do not apply as Desktop
+            // when Aerial owns Desktop+Idle.
+            let frameURL = await getOrGenerateFrame(for: videoURL, id: wallpaper.id)
+            if AerialLockScreenInstaller.isSupported {
+                AppLogger.wallpaper.info("Skipped JPEG Desktop sync (Aerial pipeline active) for '\(screen.localizedName)'")
+                return
+            }
+            guard let frameURL else {
                 AppLogger.wallpaper.warning("Cannot sync system wallpaper: failed to get frame")
                 return
             }
@@ -71,9 +80,12 @@ public final class SystemWallpaperSynchronizer {
     /// Synchronizes all connected screens with the current wallpaper.
     public func syncAllScreens(wallpaper: Wallpaper, videoURL: URL) {
         Task { @MainActor in
-            guard let frameURL = await getOrGenerateFrame(for: videoURL, id: wallpaper.id) else {
+            let frameURL = await getOrGenerateFrame(for: videoURL, id: wallpaper.id)
+            if AerialLockScreenInstaller.isSupported {
+                AppLogger.wallpaper.info("Skipped JPEG Desktop sync on all screens (Aerial pipeline active)")
                 return
             }
+            guard let frameURL else { return }
 
             for screen in NSScreen.screens {
                 do {

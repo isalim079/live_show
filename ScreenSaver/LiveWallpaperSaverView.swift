@@ -6,13 +6,14 @@ import AppKit
 /// Native macOS Screen Saver plugin for Live Show.
 ///
 /// Design:
-/// - Runs inside ScreenSaverEngine's sandboxed process at lock screen time.
+/// - Runs inside ScreenSaverEngine / legacyScreenSaver at lock screen time.
 /// - Reads ActiveWallpaper.mp4 from ~/Library/Screen Savers/ — a well-known,
 ///   sandbox-accessible path written by the main app whenever a wallpaper is set.
 /// - Falls back to any .mp4 in ~/Library/Screen Savers/ if the well-known file
 ///   is missing, and finally to the bundled SampleAmbient.mp4.
 /// - Uses AVPlayerLayer for hardware-accelerated, zero-copy video decoding.
 /// - Loops seamlessly using AVPlayerLooper (requires AVQueuePlayer).
+/// - Defers AV setup until bounds are non-zero (legacyScreenSaver may init with 0×0).
 ///
 @objc(LiveWallpaperSaverView)
 public class LiveWallpaperSaverView: ScreenSaverView {
@@ -20,17 +21,19 @@ public class LiveWallpaperSaverView: ScreenSaverView {
     private var queuePlayer: AVQueuePlayer?
     private var playerLayer: AVPlayerLayer?
     private var playerLooper: AVPlayerLooper?
+    private var didSetupPlayback = false
+    private var wantsPlayback = false
 
     // MARK: - Initializers
 
     public override init?(frame: NSRect, isPreview: Bool) {
         super.init(frame: frame, isPreview: isPreview)
-        setupPlayback()
+        commonInit()
     }
 
     public required init?(coder: NSCoder) {
         super.init(coder: coder)
-        setupPlayback()
+        commonInit()
     }
 
     deinit {
@@ -39,7 +42,47 @@ public class LiveWallpaperSaverView: ScreenSaverView {
         playerLayer?.removeFromSuperlayer()
     }
 
+    private func commonInit() {
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.black.cgColor
+        // Try immediately; if bounds are still zero, layout() will retry.
+        trySetupPlaybackIfNeeded()
+    }
+
+    // MARK: - Layout
+
+    public override func layout() {
+        super.layout()
+        trySetupPlaybackIfNeeded()
+        syncPlayerLayerFrame()
+    }
+
+    public override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        trySetupPlaybackIfNeeded()
+        syncPlayerLayerFrame()
+        if wantsPlayback {
+            queuePlayer?.play()
+        }
+    }
+
+    private func syncPlayerLayerFrame() {
+        guard let playerLayer else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        playerLayer.frame = bounds
+        CATransaction.commit()
+    }
+
     // MARK: - Setup
+
+    private func trySetupPlaybackIfNeeded() {
+        guard !didSetupPlayback else { return }
+        // legacyScreenSaver on modern macOS can construct the view with a zero frame;
+        // wait until we have a real size so AVPlayerLayer is not stuck at 0×0.
+        guard bounds.width > 1, bounds.height > 1 else { return }
+        setupPlayback()
+    }
 
     private func setupPlayback() {
         wantsLayer = true
@@ -47,6 +90,7 @@ public class LiveWallpaperSaverView: ScreenSaverView {
 
         guard let videoURL = resolveActiveWallpaperURL() else {
             // Nothing to play — show black to avoid showing a stale desktop.
+            didSetupPlayback = true
             return
         }
 
@@ -67,7 +111,12 @@ public class LiveWallpaperSaverView: ScreenSaverView {
         self.layer?.addSublayer(layer)
         self.playerLayer = layer
 
-        player.play()
+        didSetupPlayback = true
+
+        // Only start if ScreenSaverEngine has already asked us to animate.
+        if wantsPlayback {
+            player.play()
+        }
     }
 
     // MARK: - URL Resolution
@@ -112,16 +161,22 @@ public class LiveWallpaperSaverView: ScreenSaverView {
 
     public override func startAnimation() {
         super.startAnimation()
+        wantsPlayback = true
+        trySetupPlaybackIfNeeded()
+        syncPlayerLayerFrame()
         queuePlayer?.play()
     }
 
     public override func stopAnimation() {
         super.stopAnimation()
+        wantsPlayback = false
         queuePlayer?.pause()
     }
 
     public override func animateOneFrame() {
         // Rendering handled entirely by AVPlayerLayer/Core Animation — no custom drawing needed.
+        // Keep the layer sized in case the host resizes without calling layout().
+        syncPlayerLayerFrame()
     }
 
     public override var hasConfigureSheet: Bool { false }

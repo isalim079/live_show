@@ -5,6 +5,7 @@ import ServiceManagement
 /// Strictly implements Section 18 of the specification.
 public struct SettingsView: View {
     @ObservedObject var appState: AppState = AppState.shared
+    @ObservedObject private var screenSaverManager = ScreenSaverManager.shared
     @State private var launchAtLoginError: String? = nil
 
     public init() {}
@@ -27,7 +28,7 @@ public struct SettingsView: View {
                 }
         }
         .padding(20)
-        .frame(width: 480, height: 360)
+        .frame(width: 480, height: 400)
     }
 
     private var generalTab: some View {
@@ -76,15 +77,67 @@ public struct SettingsView: View {
                             .foregroundColor(.secondary)
                     }
                 }
+
+                Button(action: repairLockScreen) {
+                    Label("Repair Lock Screen Integration", systemImage: "wrench.and.screwdriver")
+                }
+                .disabled(screenSaverManager.lockScreenJobPhase.isRunning)
+
+                if screenSaverManager.lockScreenJobPhase.isRunning
+                    || screenSaverManager.lockScreenJobPhase == .done
+                    || screenSaverManager.lockScreenJobPhase == .failed
+                    || !screenSaverManager.lockScreenJobMessage.isEmpty {
+                    HStack(spacing: 8) {
+                        if screenSaverManager.lockScreenJobPhase.isRunning {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else if screenSaverManager.lockScreenJobPhase == .done {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                        } else if screenSaverManager.lockScreenJobPhase == .failed {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.red)
+                        }
+                        Text(screenSaverManager.lockScreenJobMessage.isEmpty
+                             ? statusPlaceholder
+                             : screenSaverManager.lockScreenJobMessage)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             } header: {
                 Text("Lock Screen & System Integration")
             } footer: {
-                Text("LiveWallpaper automatically keeps macOS desktop and Lock Screen in sync with matching high-resolution frames so there is no delay or black screen on reboot. In System Settings, choose 'LiveWallpaper' under Screen Saver to also animate your Lock Screen.")
+                Text("On macOS 27 Golden Gate, Live Show sets a native Aerial wallpaper for Desktop+Idle (like Wallper). Encoding can take 30–90 seconds — watch the status above. “Pause when screen is locked” only affects the desktop window, not Lock Screen video.")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
         }
         .formStyle(.grouped)
+    }
+
+    private var statusPlaceholder: String {
+        screenSaverManager.lockScreenJobPhase.isRunning ? "Working…" : ""
+    }
+
+    private func repairLockScreen() {
+        Task {
+            _ = ScreenSaverManager.shared.repairLockScreenIntegration()
+            guard let assignment = appState.store.assignments.values.first,
+                  let (wallpaper, url) = appState.wallpaperManager.wallpaperResolver?(assignment.wallpaperID) else {
+                ScreenSaverManager.shared.updateLockScreenJob(
+                    phase: .failed,
+                    message: "Failed: no active wallpaper to sync"
+                )
+                return
+            }
+            _ = await ScreenSaverManager.shared.performLockScreenSync(
+                videoURL: url,
+                wallpaperID: wallpaper.id,
+                title: wallpaper.title
+            )
+        }
     }
 
     private var playbackTab: some View {

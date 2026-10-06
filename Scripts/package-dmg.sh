@@ -37,14 +37,17 @@ ln -s /Applications "$DMG_STAGING/Applications"
 
 # Include documentation / quick start
 cat << 'EOF' > "$DMG_STAGING/READ_ME.txt"
-LiveWallpaper for macOS
-=======================
+Live Show for macOS
+===================
 
 To install:
-1. Drag "LiveWallpaper" into the "Applications" folder.
-2. Launch LiveWallpaper from Applications or Spotlight.
-3. Access controls from the menu bar icon (sparkles tv icon).
-4. Add your own MP4 / MOV videos or use the built-in ambient wallpaper!
+1. Drag "Live Show" into the "Applications" folder.
+2. Launch Live Show from Applications or Spotlight.
+   If macOS blocks it: right-click the app → Open → Open.
+3. Access controls from the menu bar icon.
+4. Add your own MP4 / MOV videos or use the built-in ambient wallpaper.
+5. For animated Lock Screen: open Settings in the app and use
+   "Repair Lock Screen Integration" if needed.
 
 Enjoy your live animated desktop!
 EOF

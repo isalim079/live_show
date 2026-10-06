@@ -75,13 +75,25 @@ if [[ -f "$ROOT_DIR/Resources/SampleAmbient.mp4" ]]; then
     cp "$ROOT_DIR/Resources/SampleAmbient.mp4" "$SAVER_BUNDLE/Contents/Resources/SampleAmbient.mp4"
 fi
 
-# Sign with deep flag so the bundle's Contents/MacOS binary is individually signed
+# Prefer Developer ID, then Apple Development, then ad-hoc.
+# Ad-hoc signatures often fail codesign --verify / Gatekeeper on lock screen (silent).
 SAVER_SIGN="${CODE_SIGN_IDENTITY:-}"
 if [[ -z "$SAVER_SIGN" ]]; then
-    SAVER_SIGN=$(security find-identity -p codesigning -v 2>/dev/null | grep -E "Developer ID Application:|Apple Development:" | head -n 1 | awk -F'"' '{print $2}' || true)
-    [[ -z "$SAVER_SIGN" ]] && SAVER_SIGN="-"
+    SAVER_SIGN=$(security find-identity -p codesigning -v 2>/dev/null | grep -E "Developer ID Application:" | head -n 1 | awk -F'"' '{print $2}' || true)
 fi
+if [[ -z "$SAVER_SIGN" ]]; then
+    SAVER_SIGN=$(security find-identity -p codesigning -v 2>/dev/null | grep -E "Apple Development:" | head -n 1 | awk -F'"' '{print $2}' || true)
+fi
+[[ -z "$SAVER_SIGN" ]] && SAVER_SIGN="-"
+echo "Signing LiveWallpaper.saver with: $SAVER_SIGN"
 codesign --force --deep --sign "$SAVER_SIGN" --timestamp=none "$SAVER_BUNDLE"
+
+# Verify before packaging — lock screen loads fail silently when signature is broken.
+if ! codesign --verify --deep --strict --verbose=2 "$SAVER_BUNDLE"; then
+    echo "WARNING: LiveWallpaper.saver codesign verify failed. Lock screen may show a static frame only." >&2
+else
+    echo "LiveWallpaper.saver codesign verify OK"
+fi
 
 cp -R "$SAVER_BUNDLE" "$RESOURCES_DIR/LiveWallpaper.saver"
 
@@ -96,6 +108,12 @@ cp -R "$SAVER_BUNDLE" "$SAVER_INSTALL_DIR/LiveWallpaper.saver"
 # copied from external drives or downloaded. These cause Gatekeeper to REJECT
 # the .saver when ScreenSaverEngine tries to load it on the lock screen.
 xattr -rc "$SAVER_INSTALL_DIR/LiveWallpaper.saver"
+
+# Re-sign after copy+xattr so the installed copy has a fresh valid signature.
+codesign --force --deep --sign "$SAVER_SIGN" --timestamp=none "$SAVER_INSTALL_DIR/LiveWallpaper.saver"
+if ! codesign --verify --deep --strict "$SAVER_INSTALL_DIR/LiveWallpaper.saver"; then
+    echo "WARNING: Installed LiveWallpaper.saver failed codesign verify." >&2
+fi
 
 # Register as the active screen saver via defaults
 defaults -currentHost write com.apple.screensaver moduleDict -dict \

@@ -5,6 +5,7 @@ import AppKit
 /// Adheres strictly to Section 37 of the specification.
 public struct DiagnosticsView: View {
     @ObservedObject var appState: AppState = AppState.shared
+    @ObservedObject private var screenSaverManager = ScreenSaverManager.shared
     @State private var copied: Bool = false
 
     public init() {}
@@ -38,6 +39,55 @@ public struct DiagnosticsView: View {
                         diagnosticRow(label: "Architecture", value: systemArchitecture)
                         diagnosticRow(label: "App Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0")
                         diagnosticRow(label: "Power Source", value: "\(appState.powerMonitor.powerSource.rawValue) (\(appState.powerMonitor.batteryLevel.map { "\($0)%" } ?? "N/A"))")
+                    }
+
+                    // Lock Screen readiness (Desktop+Idle Aerial on macOS 27)
+                    diagnosticSection(title: "Lock Screen (\(lockScreenSummary))") {
+                        let r = screenSaverManager.readiness
+                        diagnosticRow(label: "Pipeline", value: (r?.usesAerialPipeline ?? AerialLockScreenInstaller.isSupported) ? "Desktop+Idle Aerial" : "Screen Saver")
+                        if r?.usesAerialPipeline == true {
+                            diagnosticRow(label: "Aerial asset", value: boolLabel(r?.aerialAssetPresent ?? false))
+                            diagnosticRow(label: "Aerial video", value: boolLabel(r?.aerialVideoPresent ?? false))
+                            diagnosticRow(label: "Desktop aerial", value: slotLabel(ok: r?.desktopProviderOK == true && r?.desktopAssetOK == true))
+                            diagnosticRow(label: "Idle aerial", value: slotLabel(ok: r?.idleProviderOK == true && r?.idleAssetOK == true))
+                            diagnosticRow(label: "Asset ID", value: r?.aerialAssetID ?? "—")
+                        } else {
+                            diagnosticRow(label: ".saver installed", value: boolLabel(r?.saverInstalled ?? screenSaverManager.isInstalled))
+                            diagnosticRow(label: "Codesign", value: codesignLabel(r))
+                            diagnosticRow(label: "Idle provider", value: idleLabel(r))
+                        }
+                        diagnosticRow(label: "Detail", value: r?.idleDetail ?? "—")
+
+                        if !screenSaverManager.lockScreenJobMessage.isEmpty {
+                            HStack(spacing: 8) {
+                                if screenSaverManager.lockScreenJobPhase.isRunning {
+                                    ProgressView().controlSize(.small)
+                                }
+                                Text(screenSaverManager.lockScreenJobMessage)
+                                    .font(.caption)
+                                    .foregroundColor(screenSaverManager.lockScreenJobPhase == .failed ? .red : .secondary)
+                            }
+                        }
+
+                        HStack(spacing: 10) {
+                            Button(action: repairLockScreen) {
+                                if screenSaverManager.lockScreenJobPhase.isRunning {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                    Text("Working…")
+                                } else {
+                                    Label("Repair Lock Screen Integration", systemImage: "wrench.and.screwdriver")
+                                }
+                            }
+                            .disabled(screenSaverManager.lockScreenJobPhase.isRunning)
+                            .buttonStyle(.borderedProminent)
+
+                            Button("Refresh") {
+                                screenSaverManager.refreshReadiness()
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                        .padding(.top, 4)
                     }
 
                     // Connected Displays
@@ -93,6 +143,51 @@ public struct DiagnosticsView: View {
             }
         }
         .frame(minWidth: 560, minHeight: 450)
+        .onAppear {
+            screenSaverManager.refreshReadiness()
+        }
+    }
+
+    private var lockScreenSummary: String {
+        screenSaverManager.readiness?.summary ?? "Checking…"
+    }
+
+    private func boolLabel(_ value: Bool) -> String {
+        value ? "OK" : "Missing"
+    }
+
+    private func codesignLabel(_ r: LockScreenReadiness?) -> String {
+        guard let r else { return screenSaverManager.lastCodesignDetail }
+        return r.codesignOK ? "OK — \(r.codesignDetail)" : "FAIL — \(r.codesignDetail)"
+    }
+
+    private func idleLabel(_ r: LockScreenReadiness?) -> String {
+        guard let r else { return "Unknown" }
+        if r.idleProviderOK && r.idleAssetOK { return "OK — \(r.idleDetail)" }
+        return "FAIL — \(r.idleDetail)"
+    }
+
+    private func slotLabel(ok: Bool) -> String {
+        ok ? "OK" : "FAIL"
+    }
+
+    private func repairLockScreen() {
+        Task {
+            _ = ScreenSaverManager.shared.repairLockScreenIntegration()
+            guard let assignment = appState.store.assignments.values.first,
+                  let (wallpaper, url) = appState.wallpaperManager.wallpaperResolver?(assignment.wallpaperID) else {
+                ScreenSaverManager.shared.updateLockScreenJob(
+                    phase: .failed,
+                    message: "Failed: no active wallpaper to sync"
+                )
+                return
+            }
+            _ = await ScreenSaverManager.shared.performLockScreenSync(
+                videoURL: url,
+                wallpaperID: wallpaper.id,
+                title: wallpaper.title
+            )
+        }
     }
 
     private func diagnosticSection<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
@@ -135,12 +230,27 @@ public struct DiagnosticsView: View {
         let sessions = appState.wallpaperManager.activeSessions.values.map { "- \($0.display.name): \($0.currentWallpaper?.title ?? "None") (\($0.playbackState.label))" }.joined(separator: "\n")
         let power = "\(appState.powerMonitor.powerSource.rawValue) (\(appState.powerMonitor.batteryLevel.map { "\($0)%" } ?? "N/A"))"
 
+        let r = screenSaverManager.readiness
+        let lockScreen = """
+        Pipeline: \(r.map { $0.usesAerialPipeline ? "Desktop+Idle Aerial" : "ScreenSaver" } ?? "?")
+        Aerial asset: \(r.map { String($0.aerialAssetPresent) } ?? "?") video=\(r.map { String($0.aerialVideoPresent) } ?? "?") id=\(r?.aerialAssetID ?? "—")
+        Desktop aerial: \(r.map { String($0.desktopProviderOK && $0.desktopAssetOK) } ?? "?")
+        Idle aerial: \(r.map { String($0.idleProviderOK && $0.idleAssetOK) } ?? "?")
+        Detail: \(r?.idleDetail ?? "unchecked")
+        Job: \(screenSaverManager.lockScreenJobPhase.rawValue) — \(screenSaverManager.lockScreenJobMessage)
+        Saver: \(r.map { String($0.saverInstalled) } ?? "?") codesign=\(r?.codesignDetail ?? screenSaverManager.lastCodesignDetail)
+        Ready: \(r.map { String($0.isReady) } ?? "?")
+        """
+
         let report = """
         # LiveWallpaper Diagnostic Report
         Generated: \(Date())
         macOS: \(os)
         Architecture: \(systemArchitecture)
         Power: \(power)
+
+        ## Lock Screen
+        \(lockScreen)
 
         ## Displays
         \(displays.isEmpty ? "None" : displays)
