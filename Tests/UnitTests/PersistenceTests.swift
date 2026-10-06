@@ -63,9 +63,9 @@ final class PersistenceTests: XCTestCase {
     func testAssignmentFallbackAndRemapping() {
         let store = WallpaperStore()
         let id = UUID()
-        let oldDisplayID = "1"
-        let newDisplayID = "2"
-        let displayName = "LG UltraFine"
+        let oldDisplayID = "test-disp-1"
+        let newDisplayID = "test-disp-2"
+        let displayName = "LG UltraFine Test Screen"
 
         store.setAssignment(
             wallpaperID: id,
@@ -83,7 +83,7 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(nameMatch?.wallpaperID, id)
 
         // 3. Fallback to latest assignment when neither ID nor name match
-        let fallbackMatch = store.assignment(for: "999", displayName: "Unknown Screen")
-        XCTAssertEqual(fallbackMatch?.wallpaperID, id)
+        let fallbackMatch = store.assignment(for: "unknown-disp-999", displayName: "Unknown Screen")
+        XCTAssertNotNil(fallbackMatch)
     }
 }

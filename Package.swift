@@ -19,8 +19,9 @@ let package = Package(
                 "Tests",
                 "Scripts",
                 "Resources",
+                "ScreenSaver",
                 "LiveWallpaper-macOS-Production-README.md",
-                "LiveWallpaper.dmg",
+                "liveShow_v1.0.0.dmg",
                 "build",
                 "README.md",
                 "LICENSE"

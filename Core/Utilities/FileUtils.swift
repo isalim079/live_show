@@ -34,6 +34,15 @@ public enum FileUtils {
         return dir
     }
 
+    /// Returns the directory for storing full-resolution static wallpaper frames for system desktop/lock screen sync.
+    public static var systemFramesDirectory: URL {
+        let dir = appSupportDirectory.appendingPathComponent("SystemFrames", isDirectory: true)
+        if !FileManager.default.fileExists(atPath: dir.path) {
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        return dir
+    }
+
     /// Checks if a file exists and is readable at the given URL.
     public static func isFileReadable(at url: URL) -> Bool {
         let path = url.path

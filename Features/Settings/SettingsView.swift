@@ -64,6 +64,25 @@ public struct SettingsView: View {
             } header: {
                 Text("Startup")
             }
+
+            Section {
+                Button(action: {
+                    ScreenSaverManager.shared.openScreenSaverSettings()
+                }) {
+                    HStack {
+                        Label("Open macOS Screen Saver & Lock Screen Settings", systemImage: "sparkles.tv")
+                        Spacer()
+                        Image(systemName: "arrow.up.forward.app")
+                            .foregroundColor(.secondary)
+                    }
+                }
+            } header: {
+                Text("Lock Screen & System Integration")
+            } footer: {
+                Text("LiveWallpaper automatically keeps macOS desktop and Lock Screen in sync with matching high-resolution frames so there is no delay or black screen on reboot. In System Settings, choose 'LiveWallpaper' under Screen Saver to also animate your Lock Screen.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
         }
         .formStyle(.grouped)
     }

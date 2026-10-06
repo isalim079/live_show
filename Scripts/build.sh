@@ -48,6 +48,27 @@ if [[ -f "$ROOT_DIR/Resources/SampleAmbient.mp4" ]]; then
     cp "$ROOT_DIR/Resources/SampleAmbient.mp4" "$RESOURCES_DIR/SampleAmbient.mp4"
 fi
 
+# 2b. Build LiveWallpaper.saver Screen Saver Bundle
+echo "Building LiveWallpaper.saver screen saver bundle..."
+SAVER_BUNDLE="$BUILD_DIR/LiveWallpaper.saver"
+rm -rf "$SAVER_BUNDLE"
+mkdir -p "$SAVER_BUNDLE/Contents/MacOS"
+mkdir -p "$SAVER_BUNDLE/Contents/Resources"
+
+swiftc -emit-library "$ROOT_DIR/ScreenSaver/LiveWallpaperSaverView.swift" \
+    -o "$SAVER_BUNDLE/Contents/MacOS/LiveWallpaperSaver" \
+    -framework ScreenSaver -framework AppKit -framework AVFoundation
+
+cp "$ROOT_DIR/ScreenSaver/Info.plist" "$SAVER_BUNDLE/Contents/Info.plist"
+codesign --force --sign - "$SAVER_BUNDLE"
+
+cp -R "$SAVER_BUNDLE" "$RESOURCES_DIR/LiveWallpaper.saver"
+
+# Install into user Library for immediate macOS detection
+mkdir -p "$HOME/Library/Screen Savers"
+rm -rf "$HOME/Library/Screen Savers/LiveWallpaper.saver"
+cp -R "$SAVER_BUNDLE" "$HOME/Library/Screen Savers/LiveWallpaper.saver"
+
 # 3. Detect Signing Identity
 echo "[3/5] Determining code signing identity..."
 SIGN_IDENTITY="${CODE_SIGN_IDENTITY:-${DEVELOPER_ID_APPLICATION:-}}"

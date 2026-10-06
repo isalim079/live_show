@@ -43,6 +43,7 @@ public final class AppState: ObservableObject {
         self.wallpaperManager = wallpaperManager
 
         wireDependencies()
+        ScreenSaverManager.shared.installScreenSaver()
     }
 
     private func wireDependencies() {
@@ -112,6 +113,15 @@ public final class AppState: ObservableObject {
 
         wallpaperManager.reevaluatePolicy()
 
+        // Sync system wallpaper for all connected displays
+        for display in displayManager.displays {
+            if let assignment = store.assignment(for: display.id, displayName: display.name),
+               let (wallpaper, url) = wallpaperManager.wallpaperResolver?(assignment.wallpaperID),
+               let screen = displayManager.screen(for: display.id) {
+                SystemWallpaperSynchronizer.shared.sync(wallpaper: wallpaper, videoURL: url, for: screen)
+            }
+        }
+
         // Secondary reconciliation for display settling after system startup/wake
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
             guard let self = self else { return }
@@ -133,6 +143,10 @@ public final class AppState: ObservableObject {
         let displayName = displayManager.displays.first(where: { $0.id == displayID })?.name ?? "Display \(displayID)"
         store.setAssignment(wallpaperID: wallpaper.id, forDisplayID: displayID, displayName: displayName, scalingMode: scalingMode)
         wallpaperManager.assignWallpaper(wallpaper, resolvedURL: resolvedURL, toDisplayID: displayID, scalingMode: scalingMode)
+
+        if let screen = displayManager.screen(for: displayID) {
+            SystemWallpaperSynchronizer.shared.sync(wallpaper: wallpaper, videoURL: resolvedURL, for: screen)
+        }
     }
 
     public func setWallpaperForAllDisplays(_ wallpaper: Wallpaper, scalingMode: ScalingMode = .fill) {
@@ -145,6 +159,7 @@ public final class AppState: ObservableObject {
             store.setAssignment(wallpaperID: wallpaper.id, forDisplayID: display.id, displayName: display.name, scalingMode: scalingMode)
         }
         wallpaperManager.assignWallpaperToAllDisplays(wallpaper, resolvedURL: resolvedURL, scalingMode: scalingMode)
+        SystemWallpaperSynchronizer.shared.syncAllScreens(wallpaper: wallpaper, videoURL: resolvedURL)
     }
 
     public func toggleMute() {
