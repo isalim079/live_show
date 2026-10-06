@@ -1,0 +1,30 @@
+<Window x:Class="LiveWallpaper.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="LiveWallpaper Windows" 
+        Height="1080" Width="1920"
+        WindowStyle="None" 
+        ResizeMode="NoResize"
+        ShowInTaskbar="False" 
+        Background="Black"
+        Loaded="Window_Loaded">
+    
+    <Grid>
+        <!-- The MediaElement will play the video. 
+             It is set to stretch and fill the entire screen behind the icons. -->
+        <MediaElement x:Name="VideoPlayer" 
+                      LoadedBehavior="Manual" 
+                      UnloadedBehavior="Manual"
+                      Stretch="UniformToFill"
+                      MediaEnded="VideoPlayer_MediaEnded" />
+                      
+        <!-- Temporary text block to show it works even without a video loaded -->
+        <TextBlock x:Name="PlaceholderText"
+                   Text="LiveWallpaper Engine (Windows)&#x0a;Modify MainWindow.xaml.cs to load a video path!" 
+                   Foreground="White" 
+                   FontSize="24"
+                   HorizontalAlignment="Center" 
+                   VerticalAlignment="Center" 
+                   TextAlignment="Center" />
+    </Grid>
+</Window>
