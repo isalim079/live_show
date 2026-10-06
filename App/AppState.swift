@@ -114,12 +114,19 @@ public final class AppState: ObservableObject {
         wallpaperManager.reevaluatePolicy()
 
         // Sync system wallpaper for all connected displays
+        // Also update the well-known ~/Library/Screen Savers/ActiveWallpaper.mp4 link
+        // so the .saver bundle can find it at lock screen time.
+        var primaryVideoURL: URL?
         for display in displayManager.displays {
             if let assignment = store.assignment(for: display.id, displayName: display.name),
                let (wallpaper, url) = wallpaperManager.wallpaperResolver?(assignment.wallpaperID),
                let screen = displayManager.screen(for: display.id) {
                 SystemWallpaperSynchronizer.shared.sync(wallpaper: wallpaper, videoURL: url, for: screen)
+                if primaryVideoURL == nil { primaryVideoURL = url }
             }
+        }
+        if let videoURL = primaryVideoURL {
+            ScreenSaverManager.shared.updateActiveWallpaperLink(videoURL: videoURL)
         }
 
         // Secondary reconciliation for display settling after system startup/wake
@@ -147,6 +154,8 @@ public final class AppState: ObservableObject {
         if let screen = displayManager.screen(for: displayID) {
             SystemWallpaperSynchronizer.shared.sync(wallpaper: wallpaper, videoURL: resolvedURL, for: screen)
         }
+        // Keep the lock screen saver's video in sync
+        ScreenSaverManager.shared.updateActiveWallpaperLink(videoURL: resolvedURL)
     }
 
     public func setWallpaperForAllDisplays(_ wallpaper: Wallpaper, scalingMode: ScalingMode = .fill) {
@@ -160,6 +169,8 @@ public final class AppState: ObservableObject {
         }
         wallpaperManager.assignWallpaperToAllDisplays(wallpaper, resolvedURL: resolvedURL, scalingMode: scalingMode)
         SystemWallpaperSynchronizer.shared.syncAllScreens(wallpaper: wallpaper, videoURL: resolvedURL)
+        // Keep the lock screen saver's video in sync
+        ScreenSaverManager.shared.updateActiveWallpaperLink(videoURL: resolvedURL)
     }
 
     public func toggleMute() {

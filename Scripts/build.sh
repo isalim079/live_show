@@ -6,7 +6,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 cd "$ROOT_DIR"
 
-APP_NAME="liveShow_v1.1.0"
+APP_NAME="Live Show"
 SWIFT_TARGET="LiveWallpaper"
 BUILD_DIR="$ROOT_DIR/build"
 RELEASE_DIR="$BUILD_DIR/Release"
@@ -52,27 +52,54 @@ fi
 # 2b. Build LiveWallpaper.saver Screen Saver Bundle
 echo "Building LiveWallpaper.saver screen saver bundle..."
 SAVER_BUNDLE="$BUILD_DIR/LiveWallpaper.saver"
+SAVER_BINARY_NAME="LiveWallpaperSaver"
 rm -rf "$SAVER_BUNDLE"
 mkdir -p "$SAVER_BUNDLE/Contents/MacOS"
 mkdir -p "$SAVER_BUNDLE/Contents/Resources"
 
-swiftc -emit-library "$ROOT_DIR/ScreenSaver/LiveWallpaperSaverView.swift" \
-    -o "$SAVER_BUNDLE/Contents/MacOS/LiveWallpaperSaver" \
+# CRITICAL: -install_name must use @rpath so dyld resolves correctly after install.
+# Without this, the dylib embeds the build-time path (on this machine/drive),
+# which breaks loading on lock screen when paths differ.
+swiftc -emit-library \
+    -Xlinker -install_name \
+    -Xlinker "@rpath/$SAVER_BINARY_NAME" \
+    -Xlinker -rpath -Xlinker "@loader_path" \
+    "$ROOT_DIR/ScreenSaver/LiveWallpaperSaverView.swift" \
+    -o "$SAVER_BUNDLE/Contents/MacOS/$SAVER_BINARY_NAME" \
     -framework ScreenSaver -framework AppKit -framework AVFoundation
 
 cp "$ROOT_DIR/ScreenSaver/Info.plist" "$SAVER_BUNDLE/Contents/Info.plist"
-codesign --force --sign - "$SAVER_BUNDLE"
+
+# Bundle the sample video inside .saver so there's always a fallback at lock screen
+if [[ -f "$ROOT_DIR/Resources/SampleAmbient.mp4" ]]; then
+    cp "$ROOT_DIR/Resources/SampleAmbient.mp4" "$SAVER_BUNDLE/Contents/Resources/SampleAmbient.mp4"
+fi
+
+# Sign with deep flag so the bundle's Contents/MacOS binary is individually signed
+SAVER_SIGN="${CODE_SIGN_IDENTITY:-}"
+if [[ -z "$SAVER_SIGN" ]]; then
+    SAVER_SIGN=$(security find-identity -p codesigning -v 2>/dev/null | grep -E "Developer ID Application:|Apple Development:" | head -n 1 | awk -F'"' '{print $2}' || true)
+    [[ -z "$SAVER_SIGN" ]] && SAVER_SIGN="-"
+fi
+codesign --force --deep --sign "$SAVER_SIGN" --timestamp=none "$SAVER_BUNDLE"
 
 cp -R "$SAVER_BUNDLE" "$RESOURCES_DIR/LiveWallpaper.saver"
 
-# Install into user Library for immediate macOS detection
-mkdir -p "$HOME/Library/Screen Savers"
-rm -rf "$HOME/Library/Screen Savers/LiveWallpaper.saver"
-cp -R "$SAVER_BUNDLE" "$HOME/Library/Screen Savers/LiveWallpaper.saver"
+# Install into ~/Library/Screen Savers
+SAVER_INSTALL_DIR="$HOME/Library/Screen Savers"
+mkdir -p "$SAVER_INSTALL_DIR"
+rm -rf "$SAVER_INSTALL_DIR/LiveWallpaper.saver"
+cp -R "$SAVER_BUNDLE" "$SAVER_INSTALL_DIR/LiveWallpaper.saver"
 
-# Register as current user active screensaver
+# CRITICAL: Strip quarantine and provenance extended attributes.
+# macOS adds com.apple.quarantine and com.apple.provenance when files are
+# copied from external drives or downloaded. These cause Gatekeeper to REJECT
+# the .saver when ScreenSaverEngine tries to load it on the lock screen.
+xattr -rc "$SAVER_INSTALL_DIR/LiveWallpaper.saver"
+
+# Register as the active screen saver via defaults
 defaults -currentHost write com.apple.screensaver moduleDict -dict \
-  path "$HOME/Library/Screen Savers/LiveWallpaper.saver" \
+  path "$SAVER_INSTALL_DIR/LiveWallpaper.saver" \
   moduleName "LiveWallpaper" \
   type 0
 killall cfprefsd 2>/dev/null || true

@@ -6,7 +6,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 cd "$ROOT_DIR"
 
-APP_NAME="liveShow_v1.1.0"
+APP_NAME="Live Show"
 VERSION="1.1.0"
 BUILD_DIR="$ROOT_DIR/build"
 RELEASE_DIR="$BUILD_DIR/Release"
