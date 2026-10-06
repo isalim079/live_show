@@ -50,7 +50,7 @@ public class LiveWallpaperSaverView: ScreenSaverView {
 
         // Loop notification
         endObserver = NotificationCenter.default.addObserver(
-            forName: .AVPlayerItemDidPlayToEndTime,
+            forName: AVPlayerItem.didPlayToEndTimeNotification,
             object: avPlayer.currentItem,
             queue: .main
         ) { [weak avPlayer] _ in
