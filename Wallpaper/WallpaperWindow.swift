@@ -40,9 +40,9 @@ public final class WallpaperWindow: NSWindow {
         self.level = NSWindow.Level(rawValue: desktopLevel)
 
         // Behavioral attributes
-        self.isOpaque = true
+        self.isOpaque = false
         self.hasShadow = false
-        self.backgroundColor = .black
+        self.backgroundColor = .clear
         self.ignoresMouseEvents = true
         self.isReleasedWhenClosed = false
 

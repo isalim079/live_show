@@ -25,6 +25,15 @@ public enum FileUtils {
         return dir
     }
 
+    /// Returns the directory for permanently storing imported wallpaper video files.
+    public static var wallpapersDirectory: URL {
+        let dir = appSupportDirectory.appendingPathComponent("Wallpapers", isDirectory: true)
+        if !FileManager.default.fileExists(atPath: dir.path) {
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        return dir
+    }
+
     /// Checks if a file exists and is readable at the given URL.
     public static func isFileReadable(at url: URL) -> Bool {
         let path = url.path

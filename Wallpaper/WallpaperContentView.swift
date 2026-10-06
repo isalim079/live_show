@@ -28,7 +28,7 @@ public final class WallpaperContentView: NSView {
     private func setupView() {
         wantsLayer = true
         autoresizingMask = [.width, .height]
-        layer?.backgroundColor = NSColor.black.cgColor
+        layer?.backgroundColor = NSColor.clear.cgColor
     }
 
     public override func layout() {

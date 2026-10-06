@@ -71,7 +71,9 @@ public final class AppState: ObservableObject {
         }
 
         wallpaperManager.assignmentProvider = { [weak self] displayID in
-            self?.store.assignments[displayID]
+            guard let self = self else { return nil }
+            let name = self.displayManager.screen(for: displayID)?.localizedName
+            return self.store.assignment(for: displayID, displayName: name)
         }
 
         wallpaperManager.settingsProvider = { [weak self] in
@@ -84,6 +86,20 @@ public final class AppState: ObservableObject {
         AppLogger.app.info("LiveWallpaper starting up...")
         displayManager.refreshDisplays()
 
+        // Ensure connected displays have their assignments resolved and recorded
+        for display in displayManager.displays {
+            if let assignment = store.assignment(for: display.id, displayName: display.name) {
+                if store.assignments[display.id] == nil {
+                    store.setAssignment(
+                        wallpaperID: assignment.wallpaperID,
+                        forDisplayID: display.id,
+                        displayName: display.name,
+                        scalingMode: assignment.scalingMode
+                    )
+                }
+            }
+        }
+
         if store.assignments.isEmpty, let firstWallpaper = store.wallpapers.first {
             setWallpaperForAllDisplays(firstWallpaper, scalingMode: store.settings.defaultScalingMode)
         }
@@ -95,6 +111,13 @@ public final class AppState: ObservableObject {
         }
 
         wallpaperManager.reevaluatePolicy()
+
+        // Secondary reconciliation for display settling after system startup/wake
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self = self else { return }
+            self.displayManager.refreshDisplays()
+            self.wallpaperManager.reconcile()
+        }
     }
 
     public func togglePlayPause() {

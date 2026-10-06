@@ -58,4 +58,32 @@ final class PersistenceTests: XCTestCase {
         XCTAssertTrue(settings.pauseWhenScreenLocked)
         XCTAssertEqual(settings.defaultScalingMode, .fill)
     }
+
+    @MainActor
+    func testAssignmentFallbackAndRemapping() {
+        let store = WallpaperStore()
+        let id = UUID()
+        let oldDisplayID = "1"
+        let newDisplayID = "2"
+        let displayName = "LG UltraFine"
+
+        store.setAssignment(
+            wallpaperID: id,
+            forDisplayID: oldDisplayID,
+            displayName: displayName,
+            scalingMode: .fill
+        )
+
+        // 1. Direct match on old ID
+        let directMatch = store.assignment(for: oldDisplayID)
+        XCTAssertEqual(directMatch?.wallpaperID, id)
+
+        // 2. Remap match by display name when ID shifted
+        let nameMatch = store.assignment(for: newDisplayID, displayName: displayName)
+        XCTAssertEqual(nameMatch?.wallpaperID, id)
+
+        // 3. Fallback to latest assignment when neither ID nor name match
+        let fallbackMatch = store.assignment(for: "999", displayName: "Unknown Screen")
+        XCTAssertEqual(fallbackMatch?.wallpaperID, id)
+    }
 }

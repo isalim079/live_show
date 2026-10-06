@@ -43,8 +43,6 @@ public final class WallpaperSession: NSObject, VideoPlayerDelegate {
         win.contentView = view
         self.window = win
         self.contentView = view
-
-        win.orderFrontRegardless()
     }
 
     public func setScalingMode(_ mode: ScalingMode) {
@@ -64,7 +62,6 @@ public final class WallpaperSession: NSObject, VideoPlayerDelegate {
         self.scalingMode = scalingMode
         contentView?.updateScalingMode(scalingMode)
 
-        window?.orderFrontRegardless()
         setState(.loading)
         player.load(url: resolvedURL)
     }
@@ -74,7 +71,9 @@ public final class WallpaperSession: NSObject, VideoPlayerDelegate {
         switch action {
         case .play:
             if currentWallpaper != nil {
-                window?.orderFrontRegardless()
+                if player.isReady {
+                    window?.orderFrontRegardless()
+                }
                 player.play()
                 setState(.playing)
             }
@@ -83,6 +82,7 @@ public final class WallpaperSession: NSObject, VideoPlayerDelegate {
             setState(.paused(reason: reason))
         case .stop:
             player.stop()
+            window?.orderOut(nil)
             setState(.stopped)
         }
     }
@@ -130,6 +130,7 @@ public final class WallpaperSession: NSObject, VideoPlayerDelegate {
 
     public func videoPlayer(_ player: VideoPlayer, didFailWith error: WallpaperError) {
         AppLogger.wallpaper.error("Playback failed for display \(self.display.name): \(error.localizedDescription)")
+        window?.orderOut(nil)
         setState(.failed(error: error))
     }
 

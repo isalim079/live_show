@@ -144,18 +144,35 @@ public final class WallpaperStore: ObservableObject {
         // 1. Validate
         let metadata = try await MediaValidator.validate(url: url)
 
-        // 2. Create security-scoped bookmark
-        let bookmarkData = try? SecurityScopedBookmarkManager.shared.createBookmark(for: url)
-
         let id = UUID()
-        let fileSize = FileUtils.fileSize(at: url)
+        let fileExtension = url.pathExtension.isEmpty ? "mp4" : url.pathExtension
+        let destinationURL = FileUtils.wallpapersDirectory.appendingPathComponent("\(id.uuidString).\(fileExtension)")
+
+        // Copy video file into the app's internal storage so it is permanently accessible
+        // across restarts/reboots without relying on fragile external bookmarks.
+        let fileManager = FileManager.default
+        var finalURL = url
+        do {
+            if fileManager.fileExists(atPath: destinationURL.path) {
+                try? fileManager.removeItem(at: destinationURL)
+            }
+            try fileManager.copyItem(at: url, to: destinationURL)
+            finalURL = destinationURL
+            AppLogger.wallpaper.info("Successfully copied imported video to internal storage: \(destinationURL.path)")
+        } catch {
+            AppLogger.wallpaper.warning("Could not copy video to internal storage (\(error.localizedDescription)), using source URL")
+        }
+
+        // 2. Create security-scoped bookmark
+        let bookmarkData = try? SecurityScopedBookmarkManager.shared.createBookmark(for: finalURL)
+        let fileSize = FileUtils.fileSize(at: finalURL)
 
         // 3. Generate thumbnail asynchronously
-        let thumbPath = await ThumbnailGenerator.generateThumbnail(for: url, id: id)
+        let thumbPath = await ThumbnailGenerator.generateThumbnail(for: finalURL, id: id)
 
         let wallpaper = Wallpaper(
             id: id,
-            fileURL: url,
+            fileURL: finalURL,
             bookmarkData: bookmarkData,
             title: url.deletingPathExtension().lastPathComponent,
             duration: metadata.duration,
@@ -192,6 +209,13 @@ public final class WallpaperStore: ObservableObject {
         let thumbFile = FileUtils.thumbnailsDirectory.appendingPathComponent("\(id.uuidString).jpg")
         try? FileManager.default.removeItem(at: thumbFile)
 
+        // Remove internally stored video file if present
+        let extCandidates = ["mp4", "mov", "m4v"]
+        for ext in extCandidates {
+            let videoFile = FileUtils.wallpapersDirectory.appendingPathComponent("\(id.uuidString).\(ext)")
+            try? FileManager.default.removeItem(at: videoFile)
+        }
+
         saveLibrary()
         AppLogger.wallpaper.info("Removed wallpaper ID: \(id.uuidString)")
     }
@@ -213,26 +237,69 @@ public final class WallpaperStore: ObservableObject {
         saveLibrary()
     }
 
-    /// Resolves the accessible URL for a wallpaper, using bookmark or falling back to fileURL.
+    /// Looks up an assignment by display ID, display name, or falls back to the most recent assignment.
+    public func assignment(for displayID: String, displayName: String? = nil) -> WallpaperAssignment? {
+        // 1. Direct match on displayID
+        if let direct = assignments[displayID] {
+            return direct
+        }
+
+        // 2. Match by display name if display ID shifted across reboots
+        if let name = displayName, !name.isEmpty,
+           let nameMatch = assignments.values.first(where: { $0.displayName == name }) {
+            AppLogger.wallpaper.info("Remapped display assignment by name '\(name)' to display ID \(displayID)")
+            return nameMatch
+        }
+
+        // 3. Fallback: if user previously had any assignment, reuse the latest one
+        if let latest = assignments.values.max(by: { $0.updatedAt < $1.updatedAt }) {
+            AppLogger.wallpaper.info("Reusing previous wallpaper assignment for display ID \(displayID)")
+            return latest
+        }
+
+        return nil
+    }
+
+    /// Resolves the accessible URL for a wallpaper, using internal storage, bookmark, or original path.
     public func resolveURL(for wallpaper: Wallpaper) -> URL? {
+        let fileManager = FileManager.default
+        let ext = wallpaper.fileURL.pathExtension.isEmpty ? "mp4" : wallpaper.fileURL.pathExtension
+        let internalURL = FileUtils.wallpapersDirectory.appendingPathComponent("\(wallpaper.id.uuidString).\(ext)")
+
+        // 1. Priority: check internal storage
+        if fileManager.fileExists(atPath: internalURL.path) {
+            return internalURL
+        }
+
+        // 2. Direct path check with automatic migration to internal storage
+        if fileManager.fileExists(atPath: wallpaper.fileURL.path) && fileManager.isReadableFile(atPath: wallpaper.fileURL.path) {
+            SecurityScopedBookmarkManager.shared.startAccessing(url: wallpaper.fileURL)
+            try? fileManager.copyItem(at: wallpaper.fileURL, to: internalURL)
+            if fileManager.fileExists(atPath: internalURL.path) {
+                return internalURL
+            }
+            return wallpaper.fileURL
+        }
+
+        // 3. Security-scoped bookmark resolution
         if let bookmarkData = wallpaper.bookmarkData {
             do {
                 let resolved = try SecurityScopedBookmarkManager.shared.resolveBookmark(data: bookmarkData) { [weak self] newBookmark in
                     self?.updateBookmark(for: wallpaper.id, newBookmark: newBookmark)
                 }
-                return resolved
+                if fileManager.fileExists(atPath: resolved.path) {
+                    try? fileManager.copyItem(at: resolved, to: internalURL)
+                    if fileManager.fileExists(atPath: internalURL.path) {
+                        return internalURL
+                    }
+                    return resolved
+                }
             } catch {
                 AppLogger.persistence.warning("Bookmark resolution failed: \(error.localizedDescription). Trying direct path.")
             }
         }
 
-        // Direct path fallback
-        if FileManager.default.fileExists(atPath: wallpaper.fileURL.path) {
-            SecurityScopedBookmarkManager.shared.startAccessing(url: wallpaper.fileURL)
-            return wallpaper.fileURL
-        }
-
-        // If it's SampleAmbient, fallback to bundle resource
+        // 4. SampleAmbient fallback
         if wallpaper.fileURL.lastPathComponent == "SampleAmbient.mp4" {
             if let bundleSample = Bundle.main.url(forResource: "SampleAmbient", withExtension: "mp4") {
                 return bundleSample
