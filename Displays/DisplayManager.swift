@@ -18,6 +18,10 @@ public final class DisplayManager: ObservableObject {
     public weak var delegate: DisplayManagerDelegate?
 
     private var cancellables = Set<AnyCancellable>()
+    private var debounceWorkItem: DispatchWorkItem?
+    /// IDs missing from the latest snapshot; destroyed only if still missing on the next reconcile.
+    private var pendingRemovalIDs: Set<String> = []
+    private let debounceInterval: TimeInterval = 0.4
 
     public init() {
         refreshDisplays()
@@ -29,19 +33,40 @@ public final class DisplayManager: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 AppLogger.display.info("Display configuration change detected by system.")
-                self?.reconcileDisplays()
+                self?.scheduleReconcileDisplays()
             }
             .store(in: &cancellables)
     }
 
+    /// Coalesces rapid topology flaps (common on wake) before reconciling.
+    public func scheduleReconcileDisplays() {
+        debounceWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.reconcileDisplays()
+        }
+        debounceWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + debounceInterval, execute: work)
+    }
+
     /// Re-evaluates connected displays and dispatches reconciliation diffs.
     public func reconcileDisplays() {
+        debounceWorkItem?.cancel()
+        debounceWorkItem = nil
+
         let previousDisplays = self.displays
         let currentScreens = NSScreen.screens
 
         var newDescriptors: [DisplayDescriptor] = []
+        var seenIDs = Set<String>()
         for (index, screen) in currentScreens.enumerated() {
-            let descriptor = DisplayDescriptor.from(screen: screen, isPrimary: index == 0)
+            guard let descriptor = DisplayDescriptor.from(screen: screen, isPrimary: index == 0) else {
+                continue
+            }
+            if seenIDs.contains(descriptor.id) {
+                AppLogger.display.error("Duplicate display ID \(descriptor.id) for \(descriptor.name) — skipping")
+                continue
+            }
+            seenIDs.insert(descriptor.id)
             newDescriptors.append(descriptor)
         }
 
@@ -49,23 +74,39 @@ public final class DisplayManager: ObservableObject {
         let currentIDs = Set(newDescriptors.map { $0.id })
 
         let addedIDs = currentIDs.subtracting(previousIDs)
-        let removedIDs = previousIDs.subtracting(currentIDs)
+        let missingIDs = previousIDs.subtracting(currentIDs)
+
+        // Soft-remove: require two consecutive reconciles without a display before destroying.
+        let confirmedRemoved = pendingRemovalIDs.intersection(missingIDs)
+        pendingRemovalIDs = missingIDs.subtracting(confirmedRemoved)
+
+        // Displays that reappeared clear pending removal.
+        pendingRemovalIDs.subtract(currentIDs)
 
         var added: [DisplayDescriptor] = []
         for d in newDescriptors where addedIDs.contains(d.id) {
             added.append(d)
         }
 
-        self.displays = newDescriptors
+        // Keep soft-pending displays in the published list so sessions are not torn down on wake flaps.
+        var effectiveDisplays = newDescriptors
+        for prev in previousDisplays where pendingRemovalIDs.contains(prev.id) {
+            if !effectiveDisplays.contains(where: { $0.id == prev.id }) {
+                effectiveDisplays.append(prev)
+            }
+        }
+        self.displays = effectiveDisplays
 
         if !added.isEmpty {
             AppLogger.display.info("Detected \(added.count) new display(s): \(added.map { $0.name }.joined(separator: ", "))")
             delegate?.displayManager(self, didDetectAdded: added)
         }
 
-        if !removedIDs.isEmpty {
-            AppLogger.display.info("Detected \(removedIDs.count) removed display(s): \(Array(removedIDs).joined(separator: ", "))")
-            delegate?.displayManager(self, didDetectRemoved: Array(removedIDs))
+        if !confirmedRemoved.isEmpty {
+            AppLogger.display.info("Detected \(confirmedRemoved.count) removed display(s): \(Array(confirmedRemoved).joined(separator: ", "))")
+            delegate?.displayManager(self, didDetectRemoved: Array(confirmedRemoved))
+        } else if !pendingRemovalIDs.isEmpty {
+            AppLogger.display.info("Deferring removal of transient display(s): \(Array(self.pendingRemovalIDs).joined(separator: ", "))")
         }
 
         // Check for geometry or scale mutations on existing displays
@@ -83,19 +124,25 @@ public final class DisplayManager: ObservableObject {
 
     public func refreshDisplays() {
         let screens = NSScreen.screens
-        self.displays = screens.enumerated().map { index, screen in
-            DisplayDescriptor.from(screen: screen, isPrimary: index == 0)
+        var descriptors: [DisplayDescriptor] = []
+        var seenIDs = Set<String>()
+        for (index, screen) in screens.enumerated() {
+            guard let descriptor = DisplayDescriptor.from(screen: screen, isPrimary: index == 0) else {
+                continue
+            }
+            if seenIDs.contains(descriptor.id) { continue }
+            seenIDs.insert(descriptor.id)
+            descriptors.append(descriptor)
         }
+        self.displays = descriptors
     }
 
     /// Finds the NSScreen matching a display ID.
     public func screen(for displayID: String) -> NSScreen? {
         for screen in NSScreen.screens {
-            let screenNumberKey = NSDeviceDescriptionKey("NSScreenNumber")
-            if let id = screen.deviceDescription[screenNumberKey] as? CGDirectDisplayID {
-                if String(id) == displayID {
-                    return screen
-                }
+            guard let id = DisplayDescriptor.cgDisplayID(from: screen) else { continue }
+            if String(id) == displayID {
+                return screen
             }
         }
         return nil

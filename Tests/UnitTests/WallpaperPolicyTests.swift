@@ -32,7 +32,7 @@ final class WallpaperPolicyTests: XCTestCase {
         XCTAssertEqual(action, .pause(reason: .user))
     }
 
-    func testStopWhenSystemSleeps() {
+    func testPauseWhenSystemSleeps() {
         let input = WallpaperPolicy.Input(
             userWantsPlay: true,
             isSystemAsleep: true,
@@ -44,7 +44,7 @@ final class WallpaperPolicyTests: XCTestCase {
         )
 
         let action = WallpaperPolicy.evaluate(input: input)
-        XCTAssertEqual(action, .stop)
+        XCTAssertEqual(action, .pause(reason: .systemSleep))
     }
 
     func testPauseWhenScreenLockedAndSettingEnabled() {

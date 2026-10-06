@@ -16,11 +16,14 @@ public final class WallpaperManager: ObservableObject, DisplayManagerDelegate, W
     private let sleepMonitor: SleepWakeMonitor
     private let workspaceMonitor: WorkspaceMonitor
     private var cancellables = Set<AnyCancellable>()
+    private var recoveryWorkItems: [DispatchWorkItem] = []
 
     // Injected repository / store closure
     public var wallpaperResolver: ((UUID) -> (Wallpaper, URL)?)?
     public var assignmentProvider: ((String) -> WallpaperAssignment?)?
     public var settingsProvider: (() -> LiveWallpaperSettings)?
+    /// Re-persists display assignments after ID remaps (wired by AppState).
+    public var assignmentSyncHandler: (() -> Void)?
 
     public init(
         displayManager: DisplayManager,
@@ -43,13 +46,86 @@ public final class WallpaperManager: ObservableObject, DisplayManagerDelegate, W
             .sink { [weak self] _ in self?.reevaluatePolicy() }
             .store(in: &cancellables)
 
-        sleepMonitor.onStateChange = { [weak self] in
-            self?.reevaluatePolicy()
+        sleepMonitor.onStateChange = { [weak self] event in
+            guard let self else { return }
+            switch event {
+            case .policy:
+                self.reevaluatePolicy()
+            case .wakeOrUnlock:
+                self.recoverAfterWakeOrUnlock()
+            }
         }
 
         workspaceMonitor.onFullscreenStateChanged = { [weak self] _ in
             self?.reevaluatePolicy()
         }
+    }
+
+    /// Full recovery after unlock / system wake / screens wake.
+    public func recoverAfterWakeOrUnlock() {
+        AppLogger.wallpaper.info("Recovering wallpaper sessions after wake/unlock")
+        sleepMonitor.clearStickyFlagsAfterWake()
+
+        cancelScheduledRecovery()
+        performRecoveryPass()
+
+        // Delayed passes mirror launch settle — secondary displays often reappear after a flap.
+        for delay in [1.5, 3.0] as [TimeInterval] {
+            let work = DispatchWorkItem { [weak self] in
+                self?.performRecoveryPass()
+            }
+            recoveryWorkItems.append(work)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+        }
+
+        let stallCheck = DispatchWorkItem { [weak self] in
+            self?.reloadStalledPlayers()
+        }
+        recoveryWorkItems.append(stallCheck)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: stallCheck)
+    }
+
+    private func performRecoveryPass() {
+        assignmentSyncHandler?()
+        displayManager.reconcileDisplays()
+        reconcile()
+        reassertAllSessions()
+    }
+
+    private func cancelScheduledRecovery() {
+        for item in recoveryWorkItems {
+            item.cancel()
+        }
+        recoveryWorkItems.removeAll()
+    }
+
+    private func reassertAllSessions() {
+        for (id, session) in activeSessions {
+            let screen = displayManager.screen(for: id)
+            session.reassertPresentation(screen: screen)
+        }
+    }
+
+    private func reloadStalledPlayers() {
+        guard userWantsPlay else { return }
+        // Only reload when policy currently wants play.
+        let settings = settingsProvider?() ?? .default
+        let input = WallpaperPolicy.Input(
+            userWantsPlay: userWantsPlay,
+            isSystemAsleep: sleepMonitor.isSystemAsleep,
+            areScreensAsleep: sleepMonitor.areScreensAsleep,
+            isScreenLocked: sleepMonitor.isScreenLocked,
+            powerSource: powerMonitor.powerSource,
+            isFullscreenAppActive: workspaceMonitor.isFullscreenAppActive,
+            settings: settings
+        )
+        guard WallpaperPolicy.evaluate(input: input) == .play else { return }
+
+        for (_, session) in activeSessions where session.needsPlaybackRecovery {
+            AppLogger.wallpaper.warning("Stalled player on \(session.display.name) — reloading")
+            session.reloadCurrentMedia()
+        }
+        reevaluatePolicy()
     }
 
     /// Evaluates central policy and applies it to every active session.
@@ -185,6 +261,7 @@ public final class WallpaperManager: ObservableObject, DisplayManagerDelegate, W
     }
 
     public func tearDownAll() {
+        cancelScheduledRecovery()
         for (_, session) in activeSessions {
             session.destroy()
         }

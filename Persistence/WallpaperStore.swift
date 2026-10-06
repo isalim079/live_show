@@ -330,8 +330,12 @@ public final class WallpaperStore: ObservableObject {
                 do {
                     let wallpaper = try await self.importVideo(from: sampleURL)
                     for (index, screen) in NSScreen.screens.enumerated() {
-                        let screenNumberKey = NSDeviceDescriptionKey("NSScreenNumber")
-                        let displayID = String(screen.deviceDescription[screenNumberKey] as? CGDirectDisplayID ?? CGDirectDisplayID(index))
+                        let displayID: String
+                        if let cgID = DisplayDescriptor.cgDisplayID(from: screen) {
+                            displayID = String(cgID)
+                        } else {
+                            displayID = String(index)
+                        }
                         self.setAssignment(
                             wallpaperID: wallpaper.id,
                             forDisplayID: displayID,

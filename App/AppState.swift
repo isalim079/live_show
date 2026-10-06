@@ -75,23 +75,26 @@ public final class AppState: ObservableObject {
         wallpaperManager.assignmentProvider = { [weak self] displayID in
             guard let self = self else { return nil }
             let name = self.displayManager.screen(for: displayID)?.localizedName
+                ?? self.displayManager.displays.first(where: { $0.id == displayID })?.name
             return self.store.assignment(for: displayID, displayName: name)
         }
 
         wallpaperManager.settingsProvider = { [weak self] in
             self?.store.settings ?? .default
         }
+
+        wallpaperManager.assignmentSyncHandler = { [weak self] in
+            self?.syncDisplayAssignments()
+        }
     }
 
-    /// Boots the application and restores active wallpapers.
-    public func start() {
-        AppLogger.app.info("LiveWallpaper starting up...")
-        displayManager.refreshDisplays()
-
-        // Ensure connected displays have their assignments resolved and recorded
+    /// Re-persists assignments under current display IDs after wake remaps.
+    private func syncDisplayAssignments() {
         for display in displayManager.displays {
             if let assignment = store.assignment(for: display.id, displayName: display.name) {
-                if store.assignments[display.id] == nil {
+                if store.assignments[display.id] == nil
+                    || store.assignments[display.id]?.wallpaperID != assignment.wallpaperID
+                    || store.assignments[display.id]?.displayName != display.name {
                     store.setAssignment(
                         wallpaperID: assignment.wallpaperID,
                         forDisplayID: display.id,
@@ -101,6 +104,15 @@ public final class AppState: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Boots the application and restores active wallpapers.
+    public func start() {
+        AppLogger.app.info("LiveWallpaper starting up...")
+        displayManager.refreshDisplays()
+
+        // Ensure connected displays have their assignments resolved and recorded
+        syncDisplayAssignments()
 
         if store.assignments.isEmpty, let firstWallpaper = store.wallpapers.first {
             setWallpaperForAllDisplays(firstWallpaper, scalingMode: store.settings.defaultScalingMode)

@@ -43,9 +43,9 @@ public enum WallpaperPolicy {
             return .pause(reason: .user)
         }
 
-        // 2. System asleep
+        // 2. System asleep — pause (keep window attached) so wake can resume without recreate.
         if input.isSystemAsleep {
-            return .stop
+            return .pause(reason: .systemSleep)
         }
 
         // 3. Screens asleep

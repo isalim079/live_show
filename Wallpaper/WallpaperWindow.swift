@@ -35,6 +35,11 @@ public final class WallpaperWindow: NSWindow {
     }
 
     private func configureDesktopBehavior(screen: NSScreen) {
+        reassertDesktopBehavior(screen: screen)
+    }
+
+    /// Re-applies desktop level, collection behavior, and frame after lock/unlock or WindowServer churn.
+    public func reassertDesktopBehavior(screen: NSScreen) {
         // Desktop window level: directly under desktop icons, above system wallpaper
         let desktopLevel = Int(CGWindowLevelForKey(.desktopIconWindow)) - 1
         self.level = NSWindow.Level(rawValue: desktopLevel)

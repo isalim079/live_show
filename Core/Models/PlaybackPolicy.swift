@@ -46,6 +46,7 @@ public enum PauseReason: String, Codable, Sendable, CustomStringConvertible {
     case battery = "On Battery Power"
     case displaySleep = "Display Asleep"
     case screenLocked = "Screen Locked"
+    case systemSleep = "System Asleep"
     case fullscreenApp = "Fullscreen App"
     case lowPowerMode = "Low Power Mode"
 

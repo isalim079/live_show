@@ -23,6 +23,7 @@ public final class WallpaperSession: NSObject, VideoPlayerDelegate {
     private var contentView: WallpaperContentView?
     private let player: VideoPlayer
     private var policyAction: WallpaperPolicy.PolicyAction = .play
+    private var resolvedURL: URL?
 
     public init(screen: NSScreen, display: DisplayDescriptor) {
         self.displayID = display.id
@@ -52,13 +53,14 @@ public final class WallpaperSession: NSObject, VideoPlayerDelegate {
 
     public func updateGeometry(screen: NSScreen, descriptor: DisplayDescriptor) {
         self.display = descriptor
-        window?.updateGeometry(for: screen)
+        window?.reassertDesktopBehavior(screen: screen)
         contentView?.setNeedsDisplay(contentView?.bounds ?? .zero)
         window?.orderFrontRegardless()
     }
 
     public func loadWallpaper(_ wallpaper: Wallpaper, resolvedURL: URL, scalingMode: ScalingMode) {
         self.currentWallpaper = wallpaper
+        self.resolvedURL = resolvedURL
         self.scalingMode = scalingMode
         contentView?.updateScalingMode(scalingMode)
 
@@ -71,9 +73,7 @@ public final class WallpaperSession: NSObject, VideoPlayerDelegate {
         switch action {
         case .play:
             if currentWallpaper != nil {
-                if player.isReady {
-                    window?.orderFrontRegardless()
-                }
+                reassertPresentation()
                 player.play()
                 setState(.playing)
             }
@@ -87,9 +87,37 @@ public final class WallpaperSession: NSObject, VideoPlayerDelegate {
         }
     }
 
+    /// Re-applies desktop window level and brings the wallpaper to the front.
+    public func reassertPresentation(screen: NSScreen? = nil) {
+        if let screen {
+            window?.reassertDesktopBehavior(screen: screen)
+        } else if let attached = window?.screen {
+            window?.reassertDesktopBehavior(screen: attached)
+        }
+        window?.orderFrontRegardless()
+    }
+
+    /// True when policy wants play but AVPlayer is not actually running.
+    public var needsPlaybackRecovery: Bool {
+        guard currentWallpaper != nil, policyAction == .play else { return false }
+        if case .failed = playbackState { return true }
+        return !player.isPlaying
+    }
+
+    /// Reloads the current media item after sleep/lock stalls.
+    public func reloadCurrentMedia() {
+        if let url = resolvedURL ?? player.currentURL {
+            AppLogger.wallpaper.info("Reloading media for display: \(self.display.name)")
+            player.load(url: url)
+        } else {
+            player.reloadCurrentItem()
+        }
+    }
+
     public func stop() {
         player.stop()
         currentWallpaper = nil
+        resolvedURL = nil
         window?.orderOut(nil)
         setState(.stopped)
     }
@@ -115,7 +143,7 @@ public final class WallpaperSession: NSObject, VideoPlayerDelegate {
     // MARK: - VideoPlayerDelegate
     public func videoPlayerDidBecomeReady(_ player: VideoPlayer) {
         AppLogger.wallpaper.info("Player ready for display: \(self.display.name)")
-        window?.orderFrontRegardless()
+        reassertPresentation()
         if policyAction == .play {
             self.player.play()
             setState(.playing)
@@ -140,6 +168,7 @@ public final class WallpaperSession: NSObject, VideoPlayerDelegate {
         window?.close()
         window = nil
         contentView = nil
+        resolvedURL = nil
         setState(.stopped)
     }
 }

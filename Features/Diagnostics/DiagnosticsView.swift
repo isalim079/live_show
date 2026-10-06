@@ -41,6 +41,16 @@ public struct DiagnosticsView: View {
                         diagnosticRow(label: "Power Source", value: "\(appState.powerMonitor.powerSource.rawValue) (\(appState.powerMonitor.batteryLevel.map { "\($0)%" } ?? "N/A"))")
                     }
 
+                    diagnosticSection(title: "Power / Lock State") {
+                        diagnosticRow(label: "Screen locked", value: appState.sleepMonitor.isScreenLocked ? "YES" : "no")
+                        diagnosticRow(label: "Screens asleep", value: appState.sleepMonitor.areScreensAsleep ? "YES" : "no")
+                        diagnosticRow(label: "System asleep", value: appState.sleepMonitor.isSystemAsleep ? "YES" : "no")
+                        diagnosticRow(
+                            label: "Displays vs sessions",
+                            value: "\(appState.displayManager.displays.count) / \(appState.wallpaperManager.activeSessions.count)"
+                        )
+                    }
+
                     // Lock Screen readiness (Desktop+Idle Aerial on macOS 27)
                     diagnosticSection(title: "Lock Screen (\(lockScreenSummary))") {
                         let r = screenSaverManager.readiness
@@ -229,6 +239,12 @@ public struct DiagnosticsView: View {
         let displays = appState.displayManager.displays.map { "- \($0.detailedDescription)" }.joined(separator: "\n")
         let sessions = appState.wallpaperManager.activeSessions.values.map { "- \($0.display.name): \($0.currentWallpaper?.title ?? "None") (\($0.playbackState.label))" }.joined(separator: "\n")
         let power = "\(appState.powerMonitor.powerSource.rawValue) (\(appState.powerMonitor.batteryLevel.map { "\($0)%" } ?? "N/A"))"
+        let sleep = """
+        screenLocked=\(appState.sleepMonitor.isScreenLocked)
+        screensAsleep=\(appState.sleepMonitor.areScreensAsleep)
+        systemAsleep=\(appState.sleepMonitor.isSystemAsleep)
+        displays/sessions=\(appState.displayManager.displays.count)/\(appState.wallpaperManager.activeSessions.count)
+        """
 
         let r = screenSaverManager.readiness
         let lockScreen = """
@@ -248,6 +264,9 @@ public struct DiagnosticsView: View {
         macOS: \(os)
         Architecture: \(systemArchitecture)
         Power: \(power)
+
+        ## Power / Lock State
+        \(sleep)
 
         ## Lock Screen
         \(lockScreen)

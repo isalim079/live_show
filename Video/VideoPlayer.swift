@@ -23,6 +23,9 @@ public final class VideoPlayer: NSObject, ObservableObject {
     @Published public private(set) var volume: Float = 0.0
     @Published public private(set) var playbackRate: Float = 1.0
 
+    /// Last loaded media URL; used for wake/unlock recovery reloads.
+    public private(set) var currentURL: URL?
+
     private var endObserver: NSObjectProtocol?
     private var statusObserver: NSKeyValueObservation?
     private var errorObserver: NSKeyValueObservation?
@@ -62,6 +65,7 @@ public final class VideoPlayer: NSObject, ObservableObject {
     /// Loads an asset URL into the player pipeline.
     public func load(url: URL) {
         cleanupCurrentItem()
+        self.currentURL = url
 
         let asset = AVURLAsset(url: url)
         let item = AVPlayerItem(asset: asset)
@@ -131,6 +135,14 @@ public final class VideoPlayer: NSObject, ObservableObject {
         avPlayer.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
+    /// Replaces the current item with a fresh AVPlayerItem for the same URL.
+    /// Needed after sleep/lock when the existing item stalls and `play()` alone does nothing.
+    public func reloadCurrentItem() {
+        guard let url = currentURL else { return }
+        AppLogger.video.info("Reloading current item: \(url.lastPathComponent)")
+        load(url: url)
+    }
+
     public func setMuted(_ muted: Bool) {
         self.isMuted = muted
         avPlayer.isMuted = muted
@@ -166,6 +178,7 @@ public final class VideoPlayer: NSObject, ObservableObject {
 
     public func cleanup() {
         cleanupCurrentItem()
+        currentURL = nil
         timeControlObserver?.invalidate()
         timeControlObserver = nil
         avPlayer.pause()
