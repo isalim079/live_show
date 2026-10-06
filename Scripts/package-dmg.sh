@@ -6,19 +6,19 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 cd "$ROOT_DIR"
 
-APP_NAME="LiveWallpaper"
-VERSION="1.0.0"
+APP_NAME="liveShow_v1.1.0"
+VERSION="1.1.0"
 BUILD_DIR="$ROOT_DIR/build"
 RELEASE_DIR="$BUILD_DIR/Release"
 APP_BUNDLE="$RELEASE_DIR/$APP_NAME.app"
-DMG_NAME="$APP_NAME-v$VERSION.dmg"
+DMG_NAME="liveShow_v1.1.0.dmg"
 FINAL_DMG="$BUILD_DIR/$DMG_NAME"
-ROOT_DMG="$ROOT_DIR/$APP_NAME.dmg"
+ROOT_DMG="$ROOT_DIR/$DMG_NAME"
 DMG_STAGING="$BUILD_DIR/dmg_staging"
 TMP_DMG="$BUILD_DIR/tmp_uncompressed.dmg"
 
 echo "========================================="
-echo " Packaging LiveWallpaper DMG (v$VERSION)"
+echo " Packaging $DMG_NAME"
 echo "========================================="
 
 # 1. Ensure fresh release build
@@ -52,7 +52,7 @@ EOF
 # 3. Create compressed DMG using hdiutil
 echo "[2/4] Generating disk image with hdiutil..."
 hdiutil create \
-    -volname "$APP_NAME" \
+    -volname "liveShow" \
     -srcfolder "$DMG_STAGING" \
     -ov \
     -format UDZO \

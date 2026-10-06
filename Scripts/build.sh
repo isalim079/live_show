@@ -6,7 +6,8 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 cd "$ROOT_DIR"
 
-APP_NAME="LiveWallpaper"
+APP_NAME="liveShow_v1.1.0"
+SWIFT_TARGET="LiveWallpaper"
 BUILD_DIR="$ROOT_DIR/build"
 RELEASE_DIR="$BUILD_DIR/Release"
 APP_BUNDLE="$RELEASE_DIR/$APP_NAME.app"
@@ -15,14 +16,14 @@ MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 
 echo "========================================="
-echo " Building LiveWallpaper (Release Mode)"
+echo " Building $APP_NAME (Release Mode)"
 echo "========================================="
 
 # 1. Compile Release Binary with Swift Package Manager
 echo "[1/5] Compiling Swift release binary..."
 swift build -c release
 
-BIN_PATH="$ROOT_DIR/.build/release/$APP_NAME"
+BIN_PATH="$ROOT_DIR/.build/release/$SWIFT_TARGET"
 if [[ ! -f "$BIN_PATH" ]]; then
     echo "Error: Binary not found at $BIN_PATH" >&2
     exit 1
@@ -34,8 +35,8 @@ rm -rf "$APP_BUNDLE"
 mkdir -p "$MACOS_DIR"
 mkdir -p "$RESOURCES_DIR"
 
-cp "$BIN_PATH" "$MACOS_DIR/$APP_NAME"
-chmod +x "$MACOS_DIR/$APP_NAME"
+cp "$BIN_PATH" "$MACOS_DIR/$SWIFT_TARGET"
+chmod +x "$MACOS_DIR/$SWIFT_TARGET"
 
 cp "$ROOT_DIR/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
 echo -n "APPL????" > "$CONTENTS_DIR/PkgInfo"
@@ -68,6 +69,13 @@ cp -R "$SAVER_BUNDLE" "$RESOURCES_DIR/LiveWallpaper.saver"
 mkdir -p "$HOME/Library/Screen Savers"
 rm -rf "$HOME/Library/Screen Savers/LiveWallpaper.saver"
 cp -R "$SAVER_BUNDLE" "$HOME/Library/Screen Savers/LiveWallpaper.saver"
+
+# Register as current user active screensaver
+defaults -currentHost write com.apple.screensaver moduleDict -dict \
+  path "$HOME/Library/Screen Savers/LiveWallpaper.saver" \
+  moduleName "LiveWallpaper" \
+  type 0
+killall cfprefsd 2>/dev/null || true
 
 # 3. Detect Signing Identity
 echo "[3/5] Determining code signing identity..."

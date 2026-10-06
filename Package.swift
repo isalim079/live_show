@@ -22,6 +22,8 @@ let package = Package(
                 "ScreenSaver",
                 "LiveWallpaper-macOS-Production-README.md",
                 "liveShow_v1.0.0.dmg",
+                "liveShow_v1.1.0.dmg",
+                "LiveWallpaper.dmg",
                 "build",
                 "README.md",
                 "LICENSE"

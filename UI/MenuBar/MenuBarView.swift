@@ -15,7 +15,7 @@ public struct MenuBarView: View {
                 Image(systemName: "sparkles.tv")
                     .foregroundColor(.accentColor)
                     .font(.system(size: 15, weight: .bold))
-                Text("LiveWallpaper")
+                Text("liveShow")
                     .font(.headline)
                 Spacer()
 

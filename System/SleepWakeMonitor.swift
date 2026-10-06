@@ -67,6 +67,9 @@ public final class SleepWakeMonitor: ObservableObject {
             AppLogger.power.info("Screen is locked.")
             self?.isScreenLocked = true
             self?.onStateChange?()
+            Task { @MainActor in
+                ScreenSaverManager.shared.launchScreenSaverOnLock()
+            }
         }
 
         distCenter.addObserver(

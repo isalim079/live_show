@@ -27,7 +27,7 @@ public final class WindowManager {
             backing: .buffered,
             defer: false
         )
-        win.title = "LiveWallpaper Library"
+        win.title = "liveShow Library"
         win.center()
         win.isReleasedWhenClosed = false
         win.contentView = NSHostingView(rootView: view)
@@ -51,7 +51,7 @@ public final class WindowManager {
             backing: .buffered,
             defer: false
         )
-        win.title = "LiveWallpaper Settings"
+        win.title = "liveShow Settings"
         win.center()
         win.isReleasedWhenClosed = false
         win.contentView = NSHostingView(rootView: view)

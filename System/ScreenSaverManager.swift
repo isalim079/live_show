@@ -71,4 +71,38 @@ public final class ScreenSaverManager: ObservableObject {
             NSWorkspace.shared.openApplication(at: settingsApp, configuration: NSWorkspace.OpenConfiguration())
         }
     }
+
+    /// Automatically registers LiveWallpaper as the active screen saver in macOS preferences.
+    public func registerAsSystemScreenSaver() {
+        let path = destinationURL.path
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/defaults")
+        process.arguments = [
+            "-currentHost", "write", "com.apple.screensaver", "moduleDict",
+            "-dict", "path", path, "moduleName", "LiveWallpaper", "type", "0"
+        ]
+        try? process.run()
+        process.waitUntilExit()
+
+        let pKill = Process()
+        pKill.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
+        pKill.arguments = ["cfprefsd"]
+        try? pKill.run()
+        pKill.waitUntilExit()
+    }
+
+    /// Triggers ScreenSaverEngine when screen locks so that live video animates on Lock Screen.
+    public func launchScreenSaverOnLock() {
+        let engineURL = URL(fileURLWithPath: "/System/Library/CoreServices/ScreenSaverEngine.app")
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = false
+        config.addsToRecentItems = false
+        NSWorkspace.shared.openApplication(at: engineURL, configuration: config) { _, error in
+            if let err = error {
+                AppLogger.wallpaper.warning("Could not launch ScreenSaverEngine on lock: \(err.localizedDescription)")
+            } else {
+                AppLogger.wallpaper.info("ScreenSaverEngine active on Lock Screen.")
+            }
+        }
+    }
 }

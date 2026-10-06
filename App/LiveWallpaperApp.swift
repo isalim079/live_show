@@ -9,12 +9,12 @@ struct LiveWallpaperApp: App {
     @StateObject private var appState = AppState.shared
 
     var body: some Scene {
-        MenuBarExtra("LiveWallpaper", systemImage: "sparkles.tv") {
+        MenuBarExtra("liveShow", systemImage: "sparkles.tv") {
             MenuBarView()
         }
         .menuBarExtraStyle(.window)
 
-        Window("LiveWallpaper Library", id: "library") {
+        Window("liveShow Library", id: "library") {
             LibraryView()
         }
         .defaultSize(width: 800, height: 560)
