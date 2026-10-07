@@ -215,6 +215,7 @@ public struct LibraryView: View {
 struct WallpaperCard: View {
     let wallpaper: Wallpaper
     @ObservedObject var appState: AppState
+    @ObservedObject private var screenSaverManager = ScreenSaverManager.shared
     let isActive: Bool
     @State private var isHovering = false
 
@@ -338,6 +339,11 @@ struct WallpaperCard: View {
                             }
                         }
                     }
+
+                    Button("Set to Lock Screen") {
+                        appState.setLockScreen(wallpaper)
+                    }
+                    .disabled(screenSaverManager.lockScreenJobPhase.isRunning)
 
                     Button("Show in Finder") {
                         NSWorkspace.shared.activateFileViewerSelecting([wallpaper.fileURL])

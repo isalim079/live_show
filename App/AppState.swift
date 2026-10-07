@@ -237,6 +237,15 @@ public final class AppState: ObservableObject {
         Task { await self.syncLockScreen(wallpaper: wallpaper, videoURL: resolvedURL) }
     }
 
+    /// Lock-screen only: encodes/installs Aerial (or Screen Saver) without changing desktop sessions.
+    public func setLockScreen(_ wallpaper: Wallpaper) {
+        guard let resolvedURL = store.resolveURL(for: wallpaper) else {
+            AppLogger.wallpaper.error("Cannot resolve URL for lock screen: \(wallpaper.title)")
+            return
+        }
+        Task { await self.syncLockScreen(wallpaper: wallpaper, videoURL: resolvedURL) }
+    }
+
     /// Encodes HEVC Aerial with visible progress, then refreshes Desktop+Idle diagnostics.
     private func syncLockScreen(wallpaper: Wallpaper, videoURL: URL) async {
         let ok = await ScreenSaverManager.shared.performLockScreenSync(
