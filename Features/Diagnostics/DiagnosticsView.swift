@@ -51,6 +51,28 @@ public struct DiagnosticsView: View {
                         )
                     }
 
+                    // Boot & Launch Timeline
+                    diagnosticSection(title: "Boot & Launch Timeline") {
+                        if let timeline = appState.bootTimeline {
+                            diagnosticRow(label: "Launch Time (t0)", value: timelineDateFormatter.string(from: timeline.t0Launch))
+                            if let _ = timeline.tScreens {
+                                let secs = timeline.secondsToFirstScreens ?? 0
+                                diagnosticRow(label: "Screens Ready (t_screens)", value: "\(String(format: "%.2f", secs))s (\(timeline.screensCount) screen\(timeline.screensCount == 1 ? "" : "s"))")
+                            } else {
+                                diagnosticRow(label: "Screens Ready (t_screens)", value: "Waiting…")
+                            }
+                            if let _ = timeline.tPlay {
+                                let secs = timeline.secondsToFirstFrame ?? 0
+                                let display = timeline.firstPlayingDisplay ?? "Display"
+                                diagnosticRow(label: "Time to First Frame (t_play)", value: "\(String(format: "%.2f", secs))s (\(display))")
+                            } else {
+                                diagnosticRow(label: "Time to First Frame (t_play)", value: "Starting…")
+                            }
+                        } else {
+                            diagnosticRow(label: "Boot Timeline", value: "Not recorded")
+                        }
+                    }
+
                     // Lock Screen readiness (Desktop+Idle Aerial on macOS 27)
                     diagnosticSection(title: "Lock Screen (\(lockScreenSummary))") {
                         let r = screenSaverManager.readiness
@@ -258,12 +280,29 @@ public struct DiagnosticsView: View {
         Ready: \(r.map { String($0.isReady) } ?? "?")
         """
 
+        let bootTimelineStr: String
+        if let timeline = appState.bootTimeline {
+            let t0 = timelineDateFormatter.string(from: timeline.t0Launch)
+            let tScr = timeline.secondsToFirstScreens.map { String(format: "%.2fs (%d screens)", $0, timeline.screensCount) } ?? "Waiting"
+            let tPl = timeline.secondsToFirstFrame.map { String(format: "%.2fs (%@)", $0, timeline.firstPlayingDisplay ?? "") } ?? "Pending"
+            bootTimelineStr = """
+            Launch (t0): \(t0)
+            Screens ready (t_screens): \(tScr)
+            Time to first frame (t_play): \(tPl)
+            """
+        } else {
+            bootTimelineStr = "None"
+        }
+
         let report = """
         # LiveWallpaper Diagnostic Report
         Generated: \(Date())
         macOS: \(os)
         Architecture: \(systemArchitecture)
         Power: \(power)
+
+        ## Boot Timeline
+        \(bootTimelineStr)
 
         ## Power / Lock State
         \(sleep)
@@ -285,5 +324,12 @@ public struct DiagnosticsView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             copied = false
         }
+    }
+
+    private var timelineDateFormatter: DateFormatter {
+        let df = DateFormatter()
+        df.timeStyle = .medium
+        df.dateStyle = .none
+        return df
     }
 }

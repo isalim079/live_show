@@ -37,4 +37,10 @@ public final class LoginItemManager: ObservableObject {
             checkStatus()
         }
     }
+
+    public func openSystemSettingsLoginItems() {
+        if #available(macOS 13.0, *) {
+            SMAppService.openSystemSettingsLoginItems()
+        }
+    }
 }

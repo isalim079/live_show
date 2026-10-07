@@ -29,6 +29,9 @@ public struct SettingsView: View {
         }
         .padding(20)
         .frame(width: 480, height: 400)
+        .onAppear {
+            appState.loginItemManager.checkStatus()
+        }
     }
 
     private var generalTab: some View {
@@ -47,6 +50,25 @@ public struct SettingsView: View {
                         }
                     }
                 ))
+
+                if appState.loginItemManager.requiresApproval {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.orange)
+                            .font(.caption)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Login item requires approval in macOS System Settings.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Button("Open Login Items Settings") {
+                                appState.loginItemManager.openSystemSettingsLoginItems()
+                            }
+                            .buttonStyle(.link)
+                            .font(.caption)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
 
                 if let err = launchAtLoginError {
                     Text(err)

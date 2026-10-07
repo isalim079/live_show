@@ -37,4 +37,21 @@ final class StateMachineTests: XCTestCase {
         let wpLong = Wallpaper(fileURL: URL(fileURLWithPath: "/tmp/test.mp4"), duration: 3665.0)
         XCTAssertEqual(wpLong.formattedDuration, "1:01:05")
     }
+
+    func testBootTimelineCalculation() {
+        let t0 = Date()
+        var timeline = BootTimeline(t0Launch: t0)
+        XCTAssertNil(timeline.secondsToFirstScreens)
+        XCTAssertNil(timeline.secondsToFirstFrame)
+
+        timeline.tScreens = t0.addingTimeInterval(1.2)
+        timeline.screensCount = 2
+        XCTAssertEqual(timeline.screensCount, 2)
+        XCTAssertEqual(timeline.secondsToFirstScreens ?? 0, 1.2, accuracy: 0.01)
+
+        timeline.tPlay = t0.addingTimeInterval(3.5)
+        timeline.firstPlayingDisplay = "Built-in Display"
+        XCTAssertEqual(timeline.firstPlayingDisplay, "Built-in Display")
+        XCTAssertEqual(timeline.secondsToFirstFrame ?? 0, 3.5, accuracy: 0.01)
+    }
 }

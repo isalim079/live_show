@@ -1,31 +1,13 @@
 <Window x:Class="LiveWallpaper.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Live Show"
-        Height="1080" Width="1920"
+        Title="Live Show Controller"
+        Height="0" Width="0"
         WindowStyle="None"
         ResizeMode="NoResize"
         ShowInTaskbar="False"
-        Background="Black"
+        Visibility="Hidden"
         Loaded="Window_Loaded"
         Closing="Window_Closing">
-
-    <Grid>
-        <MediaElement x:Name="VideoPlayer"
-                      LoadedBehavior="Manual"
-                      UnloadedBehavior="Manual"
-                      Stretch="UniformToFill"
-                      MediaEnded="VideoPlayer_MediaEnded"
-                      MediaOpened="VideoPlayer_MediaOpened"
-                      MediaFailed="VideoPlayer_MediaFailed" />
-
-        <TextBlock x:Name="PlaceholderText"
-                   Text="Live Show&#x0a;Right-click the tray icon → Choose video…"
-                   Foreground="White"
-                   FontSize="22"
-                   HorizontalAlignment="Center"
-                   VerticalAlignment="Center"
-                   TextAlignment="Center"
-                   Opacity="0.85" />
-    </Grid>
+    <Grid />
 </Window>

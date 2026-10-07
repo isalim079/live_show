@@ -2,6 +2,24 @@ import Foundation
 import AppKit
 import Combine
 
+public struct BootTimeline: Sendable {
+    public let t0Launch: Date
+    public var tScreens: Date?
+    public var screensCount: Int = 0
+    public var tPlay: Date?
+    public var firstPlayingDisplay: String?
+
+    public var secondsToFirstScreens: Double? {
+        guard let tScreens else { return nil }
+        return tScreens.timeIntervalSince(t0Launch)
+    }
+
+    public var secondsToFirstFrame: Double? {
+        guard let tPlay else { return nil }
+        return tPlay.timeIntervalSince(t0Launch)
+    }
+}
+
 /// Root application state coordinator.
 /// Adheres to Section 4 and Section 21 of the specification.
 @MainActor
@@ -17,6 +35,7 @@ public final class AppState: ObservableObject {
     public let wallpaperManager: WallpaperManager
 
     @Published public var selectedTab: Int = 0
+    @Published public private(set) var bootTimeline: BootTimeline?
     private var cancellables = Set<AnyCancellable>()
 
     private init() {
@@ -86,6 +105,22 @@ public final class AppState: ObservableObject {
         wallpaperManager.assignmentSyncHandler = { [weak self] in
             self?.syncDisplayAssignments()
         }
+
+        wallpaperManager.onSessionStateChanged = { [weak self] session, state in
+            guard let self = self else { return }
+            if case .playing = state {
+                if self.bootTimeline?.tPlay == nil {
+                    self.bootTimeline?.tPlay = Date()
+                    self.bootTimeline?.firstPlayingDisplay = session.display.name
+                    let secs = self.bootTimeline?.secondsToFirstFrame ?? 0
+                    AppLogger.diagnostics.info("Boot timeline: first frame playing on \(session.display.name) in \(String(format: "%.2f", secs))s")
+                    AppLogger.diagnosticBuffer.log(
+                        category: "boot",
+                        message: "First frame playing on \(session.display.name) in \(String(format: "%.2f", secs))s"
+                    )
+                }
+            }
+        }
     }
 
     /// Re-persists assignments under current display IDs after wake remaps.
@@ -108,8 +143,29 @@ public final class AppState: ObservableObject {
 
     /// Boots the application and restores active wallpapers.
     public func start() {
+        let launchTime = Date()
+        var timeline = BootTimeline(t0Launch: launchTime)
         AppLogger.app.info("LiveWallpaper starting up...")
-        displayManager.refreshDisplays()
+        AppLogger.diagnostics.info("Boot timeline: t0 launch recorded at \(launchTime)")
+        AppLogger.diagnosticBuffer.log(category: "boot", message: "t0 launch at \(launchTime)")
+
+        // Sync Login Item status with settings
+        loginItemManager.checkStatus()
+        var settings = store.settings
+        if settings.launchAtLogin != loginItemManager.isEnabled {
+            settings.launchAtLogin = loginItemManager.isEnabled
+            store.settings = settings
+        }
+
+        self.displayManager.refreshDisplays()
+        if !self.displayManager.displays.isEmpty {
+            timeline.tScreens = Date()
+            timeline.screensCount = self.displayManager.displays.count
+            let secScreens = timeline.secondsToFirstScreens ?? 0
+            AppLogger.diagnostics.info("Boot timeline: t_screens reached (\(self.displayManager.displays.count) screens) in \(String(format: "%.2f", secScreens))s")
+            AppLogger.diagnosticBuffer.log(category: "boot", message: "t_screens (\(self.displayManager.displays.count) screens) in \(String(format: "%.2f", secScreens))s")
+        }
+        self.bootTimeline = timeline
 
         // Ensure connected displays have their assignments resolved and recorded
         syncDisplayAssignments()
@@ -142,13 +198,9 @@ public final class AppState: ObservableObject {
             ScreenSaverManager.shared.refreshReadiness()
         }
 
-        // Secondary reconciliation for display settling after system startup/wake
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            guard let self = self else { return }
-            self.displayManager.refreshDisplays()
-            self.wallpaperManager.reconcile()
-            ScreenSaverManager.shared.refreshReadiness()
-        }
+        // Shared boot multi-pass recovery (0s / 1.5s / 3.0s / 8.0s)
+        wallpaperManager.recoverSessions(reason: .boot)
+        ScreenSaverManager.shared.refreshReadiness()
     }
 
     public func togglePlayPause() {

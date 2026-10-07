@@ -7,7 +7,7 @@
 ; Output: windows\Output\LiveShow_Setup.exe
 
 #define MyAppName "Live Show"
-#define MyAppVersion "1.3.0"
+#define MyAppVersion "1.4.0"
 #define MyAppPublisher "Live Show"
 #define MyAppExeName "LiveWallpaper.exe"
 #define MyAppId "{{A7C3E9F1-2B4D-4E6A-9C8F-1D2E3F4A5B6C}"

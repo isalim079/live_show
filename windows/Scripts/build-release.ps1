@@ -49,9 +49,21 @@ if ($LASTEXITCODE -ne 0) {
 # Drop debug symbols from the share folder
 Get-ChildItem $OutDir -Filter *.pdb -ErrorAction SilentlyContinue | Remove-Item -Force
 
+$RepoRoot = Resolve-Path (Join-Path $WindowsRoot "..")
+$ExeTarget = Join-Path $RepoRoot "liveShow_v1.4.0.exe"
+$ZipTarget = Join-Path $RepoRoot "liveShow_windows_v1.4.0.zip"
+Copy-Item (Join-Path $OutDir "LiveWallpaper.exe") $ExeTarget -Force
+
+if (Test-Path $ZipTarget) {
+    Remove-Item -Force $ZipTarget
+}
+Compress-Archive -Path (Join-Path $OutDir "*") -DestinationPath $ZipTarget -Force
+
 Write-Host ""
 Write-Host "Portable build ready:"
 Get-ChildItem $OutDir | Format-Table Name, Length -AutoSize
+Write-Host "Standalone EXE: $ExeTarget"
+Write-Host "Release Zip:    $ZipTarget"
 Write-Host ""
 Write-Host "Optional: compile windows\Scripts\LiveShow.iss with Inno Setup to produce LiveShow_Setup.exe"
 Write-Host "========================================="

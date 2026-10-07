@@ -1,17 +1,18 @@
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
-using System.Windows.Interop;
 using Microsoft.Win32;
-using Forms = System.Windows.Forms;
 
 namespace LiveWallpaper;
 
 public partial class MainWindow : Window
 {
     private readonly AppSettings _settings = AppSettings.Load();
+    private readonly DesktopHostService _desktopService = new();
+    private DisplayTopology? _displayTopology;
     private TrayController? _tray;
-    private bool _isPlaying;
+    private SetupWindow? _setupWindow;
+    private readonly Dictionary<string, MonitorHost> _monitorHosts = new(StringComparer.OrdinalIgnoreCase);
     private bool _allowClose;
 
     public MainWindow()
@@ -21,21 +22,37 @@ public partial class MainWindow : Window
 
     private void Window_Loaded(object sender, RoutedEventArgs e)
     {
-        AttachToDesktopWorkerW();
-        CoverVirtualScreen();
+        CrashLog.LogInfo("MainWindow: Loaded. Initializing tray, topology, and desktop services...");
+
         SetupTray();
+        SetupTopology();
 
         ApplyStartWithWindows(_settings.StartWithWindows);
 
+        _setupWindow = new SetupWindow(
+            _settings,
+            onApplyVideo: (path, applyToAll) =>
+            {
+                if (applyToAll)
+                {
+                    _settings.SetVideoForAll(path);
+                }
+                ReconcileMonitorHosts();
+            },
+            onStartWithWindows: ApplyStartWithWindows);
+
+        var displays = DisplayTopology.GetConnectedDisplays();
+        _tray?.UpdateMonitorsList(displays);
+
         if (!string.IsNullOrWhiteSpace(_settings.VideoPath) && File.Exists(_settings.VideoPath))
         {
-            LoadVideo(_settings.VideoPath, autoPlay: _settings.IsPlaying);
+            ReconcileMonitorHosts();
         }
         else
         {
-            _tray?.ShowBalloon("Live Show", "Choose a video from the tray icon to start.");
-            // Prompt on first run so the app is usable without editing code.
-            Dispatcher.BeginInvoke(new Action(() => ChooseVideo(promptIfCancel: false)));
+            _tray?.ShowBalloon("Live Show", "Welcome! Select a video to start your live wallpaper.");
+            _setupWindow.Show();
+            _setupWindow.Activate();
         }
     }
 
@@ -43,14 +60,12 @@ public partial class MainWindow : Window
     {
         if (!_allowClose)
         {
-            // Closing the wallpaper window would leave a blank WorkerW child; hide instead.
             e.Cancel = true;
             Hide();
             return;
         }
 
-        _tray?.Dispose();
-        _tray = null;
+        CleanupAll();
     }
 
     private void SetupTray()
@@ -58,17 +73,231 @@ public partial class MainWindow : Window
         var icon = LoadAppIcon();
         _tray = new TrayController(icon);
         _tray.SetPlaying(_settings.IsPlaying);
+        _tray.SetApplyToAll(_settings.ApplyToAll);
         _tray.SetStartWithWindows(_settings.StartWithWindows);
 
-        _tray.ChooseVideoRequested += () => ChooseVideo(promptIfCancel: true);
+        _tray.OpenSetupRequested += () =>
+        {
+            if (_setupWindow != null)
+            {
+                _setupWindow.RefreshUI();
+                _setupWindow.Show();
+                _setupWindow.Activate();
+            }
+        };
+
+        _tray.ChooseVideoRequested += () => ChooseVideo(targetDevice: null);
         _tray.PausePlayRequested += TogglePausePlay;
+        _tray.RetryEmbedRequested += () => ReconcileMonitorHosts(forceReattach: true);
         _tray.QuitRequested += QuitApp;
+
+        _tray.ApplyToAllChanged += applyToAll =>
+        {
+            _settings.ApplyToAll = applyToAll;
+            _settings.Save();
+            ReconcileMonitorHosts();
+        };
+
+        _tray.AssignMonitorRequested += deviceName => ChooseVideo(targetDevice: deviceName);
+
         _tray.StartWithWindowsChanged += enabled =>
         {
             _settings.StartWithWindows = enabled;
             _settings.Save();
             ApplyStartWithWindows(enabled);
         };
+    }
+
+    private void SetupTopology()
+    {
+        _displayTopology = new DisplayTopology(Dispatcher);
+        _displayTopology.TopologyChanged += () =>
+        {
+            CrashLog.LogInfo("MainWindow: Display topology change detected. Reconciling monitor hosts...");
+            var displays = DisplayTopology.GetConnectedDisplays();
+            _tray?.UpdateMonitorsList(displays);
+            _setupWindow?.RefreshUI();
+            ReconcileMonitorHosts();
+        };
+    }
+
+    private void ReconcileMonitorHosts(bool forceReattach = false)
+    {
+        try
+        {
+            var currentDisplays = DisplayTopology.GetConnectedDisplays();
+            var currentDeviceNames = new HashSet<string>(currentDisplays.Select(d => d.DeviceName), StringComparer.OrdinalIgnoreCase);
+
+            // 1. Tear down hosts for monitors that have been disconnected
+            var removedKeys = _monitorHosts.Keys.Where(k => !currentDeviceNames.Contains(k)).ToList();
+            foreach (var key in removedKeys)
+            {
+                if (_monitorHosts.TryGetValue(key, out var host))
+                {
+                    CrashLog.LogInfo($"Tearing down host for disconnected display: {key}");
+                    host.CloseAndDispose();
+                    _monitorHosts.Remove(key);
+                }
+            }
+
+            // 2. Create or re-position hosts for active displays
+            foreach (var display in currentDisplays)
+            {
+                if (!_monitorHosts.TryGetValue(display.DeviceName, out var host) || forceReattach)
+                {
+                    if (host != null)
+                    {
+                        host.CloseAndDispose();
+                        _monitorHosts.Remove(display.DeviceName);
+                    }
+
+                    CrashLog.LogInfo($"Creating monitor host for {display.DisplayName} ({display.DeviceName})...");
+                    host = new MonitorHost(display);
+                    _monitorHosts[display.DeviceName] = host;
+
+                    host.AttachAndPosition(_desktopService);
+
+                    var video = _settings.GetVideoForDisplay(display.DeviceName);
+                    if (!string.IsNullOrWhiteSpace(video) && File.Exists(video))
+                    {
+                        host.LoadVideo(video, autoPlay: _settings.IsPlaying);
+                    }
+                }
+                else
+                {
+                    // Existing host: update geometry relative to WorkerW/desktop host
+                    host.UpdateGeometry(_desktopService.DesktopHostHandle);
+
+                    var video = _settings.GetVideoForDisplay(display.DeviceName);
+                    if (!string.IsNullOrWhiteSpace(video) && File.Exists(video) && host.Player.CurrentVideoPath != video)
+                    {
+                        host.LoadVideo(video, autoPlay: _settings.IsPlaying);
+                    }
+                }
+            }
+
+            _tray?.SetPlaying(_settings.IsPlaying);
+        }
+        catch (Exception ex)
+        {
+            CrashLog.LogException(ex, "MainWindow.ReconcileMonitorHosts");
+        }
+    }
+
+    private void ChooseVideo(string? targetDevice)
+    {
+        var title = string.IsNullOrWhiteSpace(targetDevice)
+            ? "Choose Live Wallpaper Video"
+            : $"Choose Video for {targetDevice}";
+
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = title,
+            Filter = "Video files (*.mp4;*.mov;*.mkv;*.webm;*.avi)|*.mp4;*.mov;*.mkv;*.webm;*.avi|All files (*.*)|*.*",
+            CheckFileExists = true,
+        };
+
+        if (dialog.ShowDialog() == true)
+        {
+            if (string.IsNullOrWhiteSpace(targetDevice) || _settings.ApplyToAll)
+            {
+                _settings.SetVideoForAll(dialog.FileName);
+            }
+            else
+            {
+                _settings.SetVideoForDisplay(targetDevice, dialog.FileName);
+            }
+
+            _settings.IsPlaying = true;
+            _settings.Save();
+
+            ReconcileMonitorHosts();
+            _setupWindow?.RefreshUI();
+        }
+    }
+
+    private void TogglePausePlay()
+    {
+        _settings.IsPlaying = !_settings.IsPlaying;
+        _settings.Save();
+
+        foreach (var host in _monitorHosts.Values)
+        {
+            if (_settings.IsPlaying)
+            {
+                host.Play();
+            }
+            else
+            {
+                host.Pause();
+            }
+        }
+
+        _tray?.SetPlaying(_settings.IsPlaying);
+    }
+
+    private void QuitApp()
+    {
+        CrashLog.LogInfo("MainWindow: Quit requested. Shutting down Live Show...");
+        _allowClose = true;
+        CleanupAll();
+        System.Windows.Application.Current.Shutdown();
+    }
+
+    private void CleanupAll()
+    {
+        foreach (var host in _monitorHosts.Values)
+        {
+            host.CloseAndDispose();
+        }
+        _monitorHosts.Clear();
+
+        _displayTopology?.Dispose();
+        _displayTopology = null;
+
+        _tray?.Dispose();
+        _tray = null;
+
+        _setupWindow?.Close();
+        _setupWindow = null;
+    }
+
+    private static void ApplyStartWithWindows(bool enabled)
+    {
+        try
+        {
+            const string appName = "LiveShow";
+            string? exePath = Environment.ProcessPath
+                ?? Process.GetCurrentProcess().MainModule?.FileName;
+            if (string.IsNullOrEmpty(exePath))
+            {
+                return;
+            }
+
+            using var key = Registry.CurrentUser.OpenSubKey(
+                @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+                writable: true);
+            if (key == null)
+            {
+                return;
+            }
+
+            if (enabled)
+            {
+                key.SetValue(appName, "\"" + exePath + "\"");
+                CrashLog.LogInfo("Registry Run key set for Live Show auto-start.");
+            }
+            else
+            {
+                key.DeleteValue(appName, throwOnMissingValue: false);
+                key.DeleteValue("LiveWallpaperEngine", throwOnMissingValue: false);
+                CrashLog.LogInfo("Registry Run key removed.");
+            }
+        }
+        catch (Exception ex)
+        {
+            CrashLog.LogException(ex, "MainWindow.ApplyStartWithWindows");
+        }
     }
 
     private static System.Drawing.Icon LoadAppIcon()
@@ -98,224 +327,5 @@ public partial class MainWindow : Window
         }
 
         return System.Drawing.SystemIcons.Application;
-    }
-
-    private void AttachToDesktopWorkerW()
-    {
-        IntPtr progman = Win32.FindWindow("Progman", null!);
-
-        IntPtr result = IntPtr.Zero;
-        Win32.SendMessageTimeout(
-            progman,
-            0x052C,
-            IntPtr.Zero,
-            IntPtr.Zero,
-            Win32.SendMessageTimeoutFlags.SMTO_NORMAL,
-            1000,
-            out result);
-
-        IntPtr workerw = IntPtr.Zero;
-        Win32.EnumWindows((tophandle, _) =>
-        {
-            IntPtr shellView = Win32.FindWindowEx(tophandle, IntPtr.Zero, "SHELLDLL_DefView", null!);
-            if (shellView != IntPtr.Zero)
-            {
-                workerw = Win32.FindWindowEx(IntPtr.Zero, tophandle, "WorkerW", null!);
-            }
-
-            return true;
-        }, IntPtr.Zero);
-
-        IntPtr windowHandle = new WindowInteropHelper(this).Handle;
-        if (workerw != IntPtr.Zero)
-        {
-            Win32.SetParent(windowHandle, workerw);
-        }
-    }
-
-    private void CoverVirtualScreen()
-    {
-        Left = SystemParameters.VirtualScreenLeft;
-        Top = SystemParameters.VirtualScreenTop;
-        Width = SystemParameters.VirtualScreenWidth;
-        Height = SystemParameters.VirtualScreenHeight;
-    }
-
-    private void ChooseVideo(bool promptIfCancel)
-    {
-        var dialog = new Microsoft.Win32.OpenFileDialog
-        {
-            Title = "Choose a video wallpaper",
-            Filter = "Video files|*.mp4;*.mov;*.mkv;*.avi;*.wmv;*.webm|All files|*.*",
-            CheckFileExists = true,
-        };
-
-        if (!string.IsNullOrWhiteSpace(_settings.VideoPath))
-        {
-            try
-            {
-                dialog.InitialDirectory = Path.GetDirectoryName(_settings.VideoPath);
-                dialog.FileName = Path.GetFileName(_settings.VideoPath);
-            }
-            catch
-            {
-                // Ignore bad persisted paths
-            }
-        }
-
-        if (dialog.ShowDialog() == true)
-        {
-            LoadVideo(dialog.FileName, autoPlay: true);
-            return;
-        }
-
-        if (promptIfCancel && string.IsNullOrWhiteSpace(_settings.VideoPath))
-        {
-            _tray?.ShowBalloon("Live Show", "No video selected. Use Choose video… from the tray.");
-        }
-    }
-
-    private void LoadVideo(string path, bool autoPlay)
-    {
-        if (!File.Exists(path))
-        {
-            Forms.MessageBox.Show(
-                $"Video not found:\n{path}",
-                "Live Show",
-                Forms.MessageBoxButtons.OK,
-                Forms.MessageBoxIcon.Warning);
-            return;
-        }
-
-        try
-        {
-            VideoPlayer.Stop();
-            VideoPlayer.Source = new Uri(path, UriKind.Absolute);
-            PlaceholderText.Visibility = Visibility.Collapsed;
-
-            _settings.VideoPath = path;
-            _settings.IsPlaying = autoPlay;
-            _settings.Save();
-
-            if (autoPlay)
-            {
-                VideoPlayer.Play();
-                _isPlaying = true;
-            }
-            else
-            {
-                VideoPlayer.Pause();
-                _isPlaying = false;
-            }
-
-            _tray?.SetPlaying(_isPlaying);
-        }
-        catch (Exception ex)
-        {
-            Forms.MessageBox.Show(
-                $"Could not play video:\n{ex.Message}",
-                "Live Show",
-                Forms.MessageBoxButtons.OK,
-                Forms.MessageBoxIcon.Error);
-        }
-    }
-
-    private void TogglePausePlay()
-    {
-        if (VideoPlayer.Source == null)
-        {
-            ChooseVideo(promptIfCancel: true);
-            return;
-        }
-
-        if (_isPlaying)
-        {
-            VideoPlayer.Pause();
-            _isPlaying = false;
-        }
-        else
-        {
-            VideoPlayer.Play();
-            _isPlaying = true;
-        }
-
-        _settings.IsPlaying = _isPlaying;
-        _settings.Save();
-        _tray?.SetPlaying(_isPlaying);
-    }
-
-    private void QuitApp()
-    {
-        _allowClose = true;
-        try
-        {
-            VideoPlayer.Stop();
-        }
-        catch
-        {
-            // Ignore
-        }
-
-        _tray?.Dispose();
-        _tray = null;
-        System.Windows.Application.Current.Shutdown();
-    }
-
-    private static void ApplyStartWithWindows(bool enabled)
-    {
-        try
-        {
-            const string appName = "LiveShow";
-            string? exePath = Environment.ProcessPath
-                ?? Process.GetCurrentProcess().MainModule?.FileName;
-            if (string.IsNullOrEmpty(exePath))
-            {
-                return;
-            }
-
-            using var key = Registry.CurrentUser.OpenSubKey(
-                @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
-                writable: true);
-            if (key == null)
-            {
-                return;
-            }
-
-            if (enabled)
-            {
-                key.SetValue(appName, "\"" + exePath + "\"");
-            }
-            else
-            {
-                key.DeleteValue(appName, throwOnMissingValue: false);
-                // Remove legacy key from earlier prototype builds
-                key.DeleteValue("LiveWallpaperEngine", throwOnMissingValue: false);
-            }
-        }
-        catch
-        {
-            // Ignore permissions/registry errors
-        }
-    }
-
-    private void VideoPlayer_MediaEnded(object sender, RoutedEventArgs e)
-    {
-        VideoPlayer.Position = TimeSpan.Zero;
-        if (_isPlaying)
-        {
-            VideoPlayer.Play();
-        }
-    }
-
-    private void VideoPlayer_MediaOpened(object sender, RoutedEventArgs e)
-    {
-        PlaceholderText.Visibility = Visibility.Collapsed;
-    }
-
-    private void VideoPlayer_MediaFailed(object sender, ExceptionRoutedEventArgs e)
-    {
-        PlaceholderText.Text = "Could not play this video.\nTry another file from the tray menu.";
-        PlaceholderText.Visibility = Visibility.Visible;
-        _tray?.ShowBalloon("Live Show", "Playback failed. Choose another video.");
     }
 }

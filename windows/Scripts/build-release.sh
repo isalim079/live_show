@@ -8,7 +8,8 @@ WINDOWS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT="$WINDOWS_ROOT/LiveWallpaper/LiveWallpaper.csproj"
 OUT_DIR="$WINDOWS_ROOT/Release_Build"
 REPO_ROOT="$(cd "$WINDOWS_ROOT/.." && pwd)"
-ZIP_NAME="liveShow_windows_v1.3.0.zip"
+ZIP_NAME="liveShow_windows_v1.4.0.zip"
+EXE_NAME="liveShow_v1.4.0.exe"
 
 export PATH="${DOTNET_ROOT:-$HOME/.dotnet}:/usr/local/share/dotnet:$PATH"
 
@@ -64,10 +65,13 @@ rm -f "$REPO_ROOT/$ZIP_NAME" "$REPO_ROOT/build/$ZIP_NAME"
   zip -ry "$REPO_ROOT/$ZIP_NAME" LiveShow
 )
 cp "$REPO_ROOT/$ZIP_NAME" "$REPO_ROOT/build/$ZIP_NAME"
+cp "$OUT_DIR/LiveWallpaper.exe" "$REPO_ROOT/$EXE_NAME"
+cp "$OUT_DIR/LiveWallpaper.exe" "$REPO_ROOT/build/$EXE_NAME" 2>/dev/null || true
 
 echo "========================================="
 echo " Portable build: $OUT_DIR"
+echo " Standalone EXE: $REPO_ROOT/$EXE_NAME"
 echo " Share zip:      $REPO_ROOT/$ZIP_NAME"
 echo " Optional: compile Scripts/LiveShow.iss with Inno Setup on Windows"
 echo "========================================="
-ls -lh "$OUT_DIR/LiveWallpaper.exe" "$REPO_ROOT/$ZIP_NAME"
+ls -lh "$OUT_DIR/LiveWallpaper.exe" "$REPO_ROOT/$EXE_NAME" "$REPO_ROOT/$ZIP_NAME"

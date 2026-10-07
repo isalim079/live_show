@@ -327,6 +327,18 @@ struct WallpaperCard: View {
 
                 // Context Actions
                 Menu {
+                    Button("Set to All Screens") {
+                        appState.setWallpaperForAllDisplays(wallpaper)
+                    }
+
+                    if appState.displayManager.displays.count > 1 {
+                        ForEach(appState.displayManager.displays) { display in
+                            Button("Set on \(display.name) Only") {
+                                appState.setWallpaper(wallpaper, forDisplayID: display.id)
+                            }
+                        }
+                    }
+
                     Button("Show in Finder") {
                         NSWorkspace.shared.activateFileViewerSelecting([wallpaper.fileURL])
                     }

@@ -24,6 +24,12 @@ public final class WallpaperManager: ObservableObject, DisplayManagerDelegate, W
     public var settingsProvider: (() -> LiveWallpaperSettings)?
     /// Re-persists display assignments after ID remaps (wired by AppState).
     public var assignmentSyncHandler: (() -> Void)?
+    public var onSessionStateChanged: ((WallpaperSession, WallpaperPlaybackState) -> Void)?
+
+    public enum RecoveryReason: Sendable {
+        case boot
+        case wakeOrUnlock
+    }
 
     public init(
         displayManager: DisplayManager,
@@ -61,16 +67,33 @@ public final class WallpaperManager: ObservableObject, DisplayManagerDelegate, W
         }
     }
 
-    /// Full recovery after unlock / system wake / screens wake.
-    public func recoverAfterWakeOrUnlock() {
-        AppLogger.wallpaper.info("Recovering wallpaper sessions after wake/unlock")
-        sleepMonitor.clearStickyFlagsAfterWake()
+    /// Desktop environment readiness check before trusting playback.
+    public var isDesktopEnvironmentReady: Bool {
+        guard !NSScreen.screens.isEmpty else { return false }
+        sleepMonitor.syncLockStateFromSession()
+        guard !sleepMonitor.isScreenLocked,
+              !sleepMonitor.areScreensAsleep,
+              !sleepMonitor.isSystemAsleep else {
+            return false
+        }
+        return true
+    }
+
+    /// Shared multi-pass recovery for system boot or wake/unlock.
+    public func recoverSessions(reason: RecoveryReason) {
+        AppLogger.wallpaper.info("Recovering wallpaper sessions (reason: \(String(describing: reason)))")
+        if reason == .wakeOrUnlock {
+            sleepMonitor.clearStickyFlagsAfterWake()
+        } else {
+            sleepMonitor.syncLockStateFromSession()
+        }
 
         cancelScheduledRecovery()
         performRecoveryPass()
 
-        // Delayed passes mirror launch settle — secondary displays often reappear after a flap.
-        for delay in [1.5, 3.0] as [TimeInterval] {
+        // Delayed settle passes: boot uses 0, 1.5, 3.0, 8.0s; wake uses 0, 1.5, 3.0s
+        let delays: [TimeInterval] = (reason == .boot) ? [1.5, 3.0, 8.0] : [1.5, 3.0]
+        for delay in delays {
             let work = DispatchWorkItem { [weak self] in
                 self?.performRecoveryPass()
             }
@@ -85,11 +108,26 @@ public final class WallpaperManager: ObservableObject, DisplayManagerDelegate, W
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: stallCheck)
     }
 
+    /// Full recovery after unlock / system wake / screens wake.
+    public func recoverAfterWakeOrUnlock() {
+        recoverSessions(reason: .wakeOrUnlock)
+    }
+
     private func performRecoveryPass() {
         assignmentSyncHandler?()
         displayManager.reconcileDisplays()
         reconcile()
         reassertAllSessions()
+
+        // If desktop stack is ready and user wants play, recover stalled players and reassert window levels.
+        if isDesktopEnvironmentReady && userWantsPlay {
+            for (_, session) in activeSessions where session.needsPlaybackRecovery {
+                AppLogger.wallpaper.warning("Playback recovery triggered on \(session.display.name) — reloading and reasserting")
+                session.reloadCurrentMedia()
+                session.reassertPresentation(screen: displayManager.screen(for: session.displayID))
+            }
+            reevaluatePolicy()
+        }
     }
 
     private func cancelScheduledRecovery() {
@@ -258,6 +296,7 @@ public final class WallpaperManager: ObservableObject, DisplayManagerDelegate, W
     public func wallpaperSession(_ session: WallpaperSession, stateDidChange state: WallpaperPlaybackState) {
         AppLogger.wallpaper.info("Display [\(session.display.name)] state: \(state.label)")
         objectWillChange.send()
+        onSessionStateChanged?(session, state)
     }
 
     public func tearDownAll() {

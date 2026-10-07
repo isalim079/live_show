@@ -4,7 +4,7 @@ using System.Text.Json;
 namespace LiveWallpaper;
 
 /// <summary>
-/// Persists user preferences under %AppData%\LiveShow\settings.json.
+/// Persists user preferences and multi-monitor assignments under %AppData%\LiveShow\settings.json.
 /// </summary>
 public sealed class AppSettings
 {
@@ -14,6 +14,8 @@ public sealed class AppSettings
     };
 
     public string? VideoPath { get; set; }
+    public Dictionary<string, string> Assignments { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public bool ApplyToAll { get; set; } = true;
     public bool IsPlaying { get; set; } = true;
     public bool StartWithWindows { get; set; }
 
@@ -34,13 +36,14 @@ public sealed class AppSettings
                 var settings = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions);
                 if (settings != null)
                 {
+                    settings.Assignments ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                     return settings;
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Fall through to defaults
+            CrashLog.LogException(ex, "AppSettings.Load");
         }
 
         return new AppSettings();
@@ -54,9 +57,37 @@ public sealed class AppSettings
             var json = JsonSerializer.Serialize(this, JsonOptions);
             File.WriteAllText(SettingsPath, json);
         }
-        catch
+        catch (Exception ex)
         {
-            // Ignore disk errors; wallpaper can still run for this session
+            CrashLog.LogException(ex, "AppSettings.Save");
         }
+    }
+
+    public string? GetVideoForDisplay(string deviceName)
+    {
+        if (ApplyToAll)
+        {
+            return VideoPath;
+        }
+
+        if (Assignments.TryGetValue(deviceName, out var path) && !string.IsNullOrWhiteSpace(path))
+        {
+            return path;
+        }
+
+        return VideoPath;
+    }
+
+    public void SetVideoForDisplay(string deviceName, string path)
+    {
+        Assignments[deviceName] = path;
+        Save();
+    }
+
+    public void SetVideoForAll(string path)
+    {
+        VideoPath = path;
+        ApplyToAll = true;
+        Save();
     }
 }
