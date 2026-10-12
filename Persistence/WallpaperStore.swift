@@ -7,11 +7,18 @@ public struct LibraryData: Codable, Sendable {
     public var version: Int = 1
     public var wallpapers: [Wallpaper] = []
     public var assignments: [String: WallpaperAssignment] = [:]
+    public var lockScreenWallpaperID: UUID? = nil
 
-    public init(version: Int = 1, wallpapers: [Wallpaper] = [], assignments: [String: WallpaperAssignment] = [:]) {
+    public init(
+        version: Int = 1,
+        wallpapers: [Wallpaper] = [],
+        assignments: [String: WallpaperAssignment] = [:],
+        lockScreenWallpaperID: UUID? = nil
+    ) {
         self.version = version
         self.wallpapers = wallpapers
         self.assignments = assignments
+        self.lockScreenWallpaperID = lockScreenWallpaperID
     }
 }
 
@@ -21,6 +28,7 @@ public struct LibraryData: Codable, Sendable {
 public final class WallpaperStore: ObservableObject {
     @Published public private(set) var wallpapers: [Wallpaper] = []
     @Published public private(set) var assignments: [String: WallpaperAssignment] = [:]
+    @Published public private(set) var lockScreenWallpaperID: UUID? = nil
     @Published public var settings: LiveWallpaperSettings = .default {
         didSet { saveSettings() }
     }
@@ -63,6 +71,7 @@ public final class WallpaperStore: ObservableObject {
             let decoded = try decoder.decode(LibraryData.self, from: data)
             self.wallpapers = decoded.wallpapers
             self.assignments = decoded.assignments
+            self.lockScreenWallpaperID = decoded.lockScreenWallpaperID
             AppLogger.persistence.info("Successfully loaded library with \(self.wallpapers.count) wallpaper(s).")
         } catch {
             AppLogger.persistence.error("Failed to decode library: \(error.localizedDescription). Attempting backup.")
@@ -71,11 +80,13 @@ public final class WallpaperStore: ObservableObject {
                    let decoded = try? JSONDecoder().decode(LibraryData.self, from: backupData) {
                     self.wallpapers = decoded.wallpapers
                     self.assignments = decoded.assignments
+                    self.lockScreenWallpaperID = decoded.lockScreenWallpaperID
                     return
                 }
             }
             self.wallpapers = []
             self.assignments = [:]
+            self.lockScreenWallpaperID = nil
         }
     }
 
@@ -83,7 +94,8 @@ public final class WallpaperStore: ObservableObject {
         let dataToSave = LibraryData(
             version: 1,
             wallpapers: self.wallpapers,
-            assignments: self.assignments
+            assignments: self.assignments,
+            lockScreenWallpaperID: self.lockScreenWallpaperID
         )
 
         do {
@@ -199,6 +211,10 @@ public final class WallpaperStore: ObservableObject {
         objectWillChange.send()
         wallpapers.removeAll(where: { $0.id == id })
 
+        if lockScreenWallpaperID == id {
+            lockScreenWallpaperID = nil
+        }
+
         // Clear assignments using this wallpaper and stop playback
         for (dispID, assignment) in assignments where assignment.wallpaperID == id {
             assignments.removeValue(forKey: dispID)
@@ -235,6 +251,23 @@ public final class WallpaperStore: ObservableObject {
         }
 
         saveLibrary()
+    }
+
+    public func setLockScreenWallpaper(id: UUID) {
+        objectWillChange.send()
+        self.lockScreenWallpaperID = id
+        if let index = wallpapers.firstIndex(where: { $0.id == id }) {
+            wallpapers[index].lastPlayedAt = Date()
+        }
+        saveLibrary()
+        AppLogger.wallpaper.info("Saved lock screen wallpaper ID: \(id.uuidString)")
+    }
+
+    public func clearLockScreenWallpaper() {
+        objectWillChange.send()
+        self.lockScreenWallpaperID = nil
+        saveLibrary()
+        AppLogger.wallpaper.info("Cleared lock screen wallpaper assignment")
     }
 
     /// Looks up an assignment by display ID, display name, or falls back to the most recent assignment.

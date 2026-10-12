@@ -50,8 +50,8 @@ if ($LASTEXITCODE -ne 0) {
 Get-ChildItem $OutDir -Filter *.pdb -ErrorAction SilentlyContinue | Remove-Item -Force
 
 $RepoRoot = Resolve-Path (Join-Path $WindowsRoot "..")
-$ExeTarget = Join-Path $RepoRoot "liveShow_v1.4.0.exe"
-$ZipTarget = Join-Path $RepoRoot "liveShow_windows_v1.4.0.zip"
+$ExeTarget = Join-Path $RepoRoot "liveShow_v1.5.0.exe"
+$ZipTarget = Join-Path $RepoRoot "liveShow_windows_v1.5.0.zip"
 Copy-Item (Join-Path $OutDir "LiveWallpaper.exe") $ExeTarget -Force
 
 if (Test-Path $ZipTarget) {

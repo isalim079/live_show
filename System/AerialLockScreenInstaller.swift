@@ -46,17 +46,31 @@ public final class AerialLockScreenInstaller: @unchecked Sendable {
         return major >= 25
     }
 
+    public enum WallpaperTarget: String, Sendable {
+        case homeScreen
+        case lockScreen
+        case both
+    }
+
     private init() {}
 
+    /// Cleans up any poisoned legacy screen saver defaults that crash ScreenSaverEngine on macOS 26/27.
+    public func purgeLegacyScreenSaverDefaults() {
+        _ = try? run("/usr/bin/defaults", ["-currentHost", "delete", "com.apple.screensaver", "moduleDict"])
+        _ = try? run("/usr/bin/killall", ["cfprefsd"])
+        AppLogger.wallpaper.info("Purged com.apple.screensaver moduleDict")
+    }
+
     /// Encode + register + set Desktop/Idle to the aerial asset. Safe to call from wallpaper set / Repair.
-    /// `onProgress` receives human-readable status strings (may be called off the main actor).
+    /// `onProgress` receives human-readable status strings.
     @discardableResult
     public func install(
         videoURL: URL,
         wallpaperID: UUID,
         title: String,
+        target: WallpaperTarget = .both,
         onProgress: (@Sendable (String) -> Void)? = nil
-    ) -> Bool {
+    ) async -> Bool {
         guard Self.isSupported else {
             lastErrorDetail = "Native Aerial lock screen requires macOS 26+"
             AppLogger.wallpaper.warning("\(self.lastErrorDetail)")
@@ -64,6 +78,7 @@ public final class AerialLockScreenInstaller: @unchecked Sendable {
         }
 
         do {
+            purgeLegacyScreenSaverDefaults()
             try ensureDirectoryLayout()
 
             onProgress?("Encoding lock-screen video…")
@@ -83,21 +98,86 @@ public final class AerialLockScreenInstaller: @unchecked Sendable {
             try FileManager.default.copyItem(at: encodedURL, to: videoDest)
             stripXattrs(at: videoDest)
 
-            try writeThumbnail(from: encodedURL, to: thumbDest)
+            try await writeThumbnail(from: encodedURL, to: thumbDest)
             try patchEntriesJSON(assetID: assetID, title: title, videoURL: videoDest, thumbnailURL: thumbDest)
-            try setWallpaperSlotsToAerial(assetID: assetID)
+            try setWallpaperSlotsToAerial(assetID: assetID, target: target)
             refreshWallpaperAgents()
 
             lastAssetID = assetID
             lastErrorDetail = ""
             onProgress?("Lock screen ready")
-            AppLogger.wallpaper.info("Installed Aerial Desktop+Idle asset \(assetID)")
+            AppLogger.wallpaper.info("Installed Aerial \(target.rawValue) asset \(assetID)")
             return true
         } catch {
             lastErrorDetail = error.localizedDescription
             onProgress?("Failed: \(error.localizedDescription)")
-            AppLogger.wallpaper.error("Aerial lock-screen install failed: \(error.localizedDescription)")
+            AppLogger.wallpaper.error("Aerial install failed: \(error.localizedDescription)")
             return false
+        }
+    }
+
+    /// Deep repair of the macOS 27 native Aerial lock screen pipeline.
+    public func repairAerialPipeline(
+        videoURL: URL,
+        wallpaperID: UUID,
+        title: String,
+        onProgress: (@Sendable (String) -> Void)? = nil
+    ) async -> (Bool, String) {
+        guard Self.isSupported else {
+            let msg = "Native Aerial lock screen requires macOS 26+"
+            onProgress?(msg)
+            return (false, msg)
+        }
+
+        do {
+            onProgress?("Purging legacy screensaver conflicts…")
+            purgeLegacyScreenSaverDefaults()
+
+            onProgress?("Verifying Aerial catalog structure…")
+            try ensureDirectoryLayout()
+
+            onProgress?("Verifying lock-screen video…")
+            let assetID = wallpaperID.uuidString.uppercased()
+            let videoDest = videosDir.appendingPathComponent("\(assetID).mov")
+            let thumbDest = thumbnailsDir.appendingPathComponent("\(assetID).png")
+
+            var encodedURL: URL
+            if FileManager.default.fileExists(atPath: videoDest.path),
+               FileUtils.fileSize(at: videoDest) > 100_000 {
+                encodedURL = videoDest
+            } else {
+                onProgress?("Encoding video for Lock Screen…")
+                encodedURL = try AerialTemporalEncoder.encodeIfNeeded(
+                    wallpaperID: wallpaperID,
+                    sourceURL: videoURL
+                )
+                if FileManager.default.fileExists(atPath: videoDest.path) {
+                    try FileManager.default.removeItem(at: videoDest)
+                }
+                try FileManager.default.copyItem(at: encodedURL, to: videoDest)
+            }
+            stripXattrs(at: videoDest)
+
+            if !FileManager.default.fileExists(atPath: thumbDest.path) {
+                onProgress?("Generating thumbnail…")
+                try await writeThumbnail(from: videoDest, to: thumbDest)
+            }
+
+            onProgress?("Patching catalog manifest…")
+            try patchEntriesJSON(assetID: assetID, title: title, videoURL: videoDest, thumbnailURL: thumbDest)
+
+            onProgress?("Configuring lock screen slots…")
+            try setWallpaperSlotsToAerial(assetID: assetID, target: .lockScreen)
+
+            refreshWallpaperAgents()
+            lastAssetID = assetID
+            lastErrorDetail = ""
+            onProgress?("Lock screen successfully repaired")
+            return (true, "Lock screen ready")
+        } catch {
+            lastErrorDetail = error.localizedDescription
+            onProgress?("Repair failed: \(error.localizedDescription)")
+            return (false, error.localizedDescription)
         }
     }
 
@@ -117,10 +197,17 @@ public final class AerialLockScreenInstaller: @unchecked Sendable {
         public var isReady: Bool {
             supported && assetPresent && videoPresent
                 && idleProviderOK && idleAssetOK
-                && desktopProviderOK && desktopAssetOK
         }
 
-        public var summary: String { isReady ? "Ready (Desktop+Idle Aerial)" : "Needs attention" }
+        public var isBothReady: Bool {
+            isReady && desktopProviderOK && desktopAssetOK
+        }
+
+        public var summary: String {
+            if isBothReady { return "Ready (Home & Lock Screen)" }
+            if isReady { return "Ready (Lock Screen Aerial)" }
+            return "Needs attention"
+        }
     }
 
     public func inspectReadiness(expectedAssetID: String? = nil) -> AerialReadiness {
@@ -294,31 +381,14 @@ public final class AerialLockScreenInstaller: @unchecked Sendable {
 
     // MARK: - Thumbnail
 
-    private func writeThumbnail(from videoURL: URL, to dest: URL) throws {
+    private func writeThumbnail(from videoURL: URL, to dest: URL) async throws {
         let asset = AVURLAsset(url: videoURL)
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width: 1280, height: 720)
         let time = CMTime(seconds: 0.5, preferredTimescale: 600)
 
-        let sem = DispatchSemaphore(value: 0)
-        var cgImage: CGImage?
-        var genError: Error?
-        Task {
-            do {
-                let (img, _) = try await generator.image(at: time)
-                cgImage = img
-            } catch {
-                genError = error
-            }
-            sem.signal()
-        }
-        sem.wait()
-        if let genError { throw genError }
-        guard let cgImage else {
-            throw NSError(domain: "AerialLockScreen", code: 2, userInfo: [NSLocalizedDescriptionKey: "No thumbnail frame"])
-        }
-
+        let (cgImage, _) = try await generator.image(at: time)
         let rep = NSBitmapImageRep(cgImage: cgImage)
         guard let png = rep.representation(using: .png, properties: [:]) else {
             throw NSError(domain: "AerialLockScreen", code: 2, userInfo: [NSLocalizedDescriptionKey: "PNG encode failed"])
@@ -331,7 +401,7 @@ public final class AerialLockScreenInstaller: @unchecked Sendable {
 
     // MARK: - Desktop + Idle Index.plist (required on Golden Gate for lock animation)
 
-    private func setWallpaperSlotsToAerial(assetID: String) throws {
+    private func setWallpaperSlotsToAerial(assetID: String, target: WallpaperTarget = .both) throws {
         guard FileManager.default.fileExists(atPath: indexURL.path) else {
             throw NSError(domain: "AerialLockScreen", code: 3, userInfo: [NSLocalizedDescriptionKey: "WallpaperAgent Index.plist missing"])
         }
@@ -368,9 +438,18 @@ public final class AerialLockScreenInstaller: @unchecked Sendable {
         var updated = 0
 
         func applySlots(to entry: inout [String: Any]) {
-            entry["Desktop"] = slotEntry
-            entry["Idle"] = slotEntry
-            updated += 2
+            switch target {
+            case .homeScreen:
+                entry["Desktop"] = slotEntry
+                updated += 1
+            case .lockScreen:
+                entry["Idle"] = slotEntry
+                updated += 1
+            case .both:
+                entry["Desktop"] = slotEntry
+                entry["Idle"] = slotEntry
+                updated += 2
+            }
         }
 
         if var allSpaces = plist["AllSpacesAndDisplays"] as? [String: Any] {
@@ -421,7 +500,7 @@ public final class AerialLockScreenInstaller: @unchecked Sendable {
         _ = try? run("/usr/bin/killall", ["-CONT", "WallpaperAgent"])
         _ = try? run("/usr/bin/killall", ["-HUP", "WallpaperAgent"])
 
-        AppLogger.wallpaper.info("Patched \(updated) Desktop+Idle slot(s) → aerials \(assetID)")
+        AppLogger.wallpaper.info("Patched \(updated) slot(s) for \(target.rawValue) → aerials \(assetID)")
     }
 
     private func inspectSlot(named slot: String, expectedAssetID: String) -> (providerOK: Bool, assetOK: Bool, detail: String) {

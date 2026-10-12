@@ -8,8 +8,8 @@ WINDOWS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT="$WINDOWS_ROOT/LiveWallpaper/LiveWallpaper.csproj"
 OUT_DIR="$WINDOWS_ROOT/Release_Build"
 REPO_ROOT="$(cd "$WINDOWS_ROOT/.." && pwd)"
-ZIP_NAME="liveShow_windows_v1.4.0.zip"
-EXE_NAME="liveShow_v1.4.0.exe"
+ZIP_NAME="liveShow_windows_v1.5.0.zip"
+EXE_NAME="liveShow_v1.5.0.exe"
 
 export PATH="${DOTNET_ROOT:-$HOME/.dotnet}:/usr/local/share/dotnet:$PATH"
 

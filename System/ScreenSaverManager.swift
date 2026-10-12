@@ -22,13 +22,17 @@ public struct LockScreenReadiness: Equatable {
         if usesAerialPipeline {
             return aerialAssetPresent && aerialVideoPresent
                 && idleProviderOK && idleAssetOK
-                && desktopProviderOK && desktopAssetOK
         }
         return saverInstalled && codesignOK && idleProviderOK
     }
 
     public var summary: String {
-        if isReady { return usesAerialPipeline ? "Ready (Desktop+Idle Aerial)" : "Ready" }
+        if isReady {
+            if usesAerialPipeline {
+                return (desktopProviderOK && desktopAssetOK) ? "Ready (Home & Lock Screen)" : "Ready (Lock Screen Aerial)"
+            }
+            return "Ready"
+        }
         return "Needs attention"
     }
 }
@@ -83,21 +87,25 @@ public final class ScreenSaverManager: ObservableObject {
     /// Ensures optional .saver is present for Screen Saver prefs. Lock screen uses Aerial on macOS 26+.
     @discardableResult
     public func ensureInstalled() -> Bool {
+        if AerialLockScreenInstaller.isSupported {
+            // On macOS 26/27, purge any legacy screensaver defaults that cause ScreenSaverEngine Launch Constraint Violation crashes.
+            AerialLockScreenInstaller.shared.purgeLegacyScreenSaverDefaults()
+            refreshReadiness()
+            return readiness?.isReady ?? true
+        }
         checkStatus()
         if isInstalled {
             let (ok, detail) = verifyCodesign(at: destinationURL)
             lastCodesignOK = ok
             lastCodesignDetail = detail
             if ok {
-                // Register as system screensaver module only — do NOT overwrite Idle with .saver
-                // when the native Aerial lock-screen pipeline is available.
-                registerAsSystemScreenSaver(injectIntoIdle: !AerialLockScreenInstaller.isSupported)
+                registerAsSystemScreenSaver(injectIntoIdle: true)
                 refreshReadiness()
                 return true
             }
             AppLogger.wallpaper.warning("Installed .saver failed codesign verify (\(detail)); reinstalling.")
         }
-        let success = installScreenSaver(injectIntoIdle: !AerialLockScreenInstaller.isSupported)
+        let success = installScreenSaver(injectIntoIdle: true)
         refreshReadiness()
         return success
     }
@@ -159,17 +167,75 @@ public final class ScreenSaverManager: ObservableObject {
         return false
     }
 
-    /// Repairs lock-screen integration: native Aerial on macOS 26+, legacy .saver Idle otherwise.
+    /// Deep repair of lock-screen integration: native Aerial on macOS 26+, legacy .saver Idle otherwise.
     @discardableResult
-    public func repairLockScreenIntegration() -> Bool {
-        _ = installScreenSaver(injectIntoIdle: !AerialLockScreenInstaller.isSupported)
-        refreshReadiness()
-        return readiness?.isReady ?? false
+    public func repairLockScreenIntegration(
+        videoURL: URL? = nil,
+        wallpaperID: UUID? = nil,
+        title: String? = nil
+    ) async -> Bool {
+        guard !lockScreenJobPhase.isRunning else {
+            lockScreenJobMessage = "Repair already in progress…"
+            return false
+        }
+
+        lockScreenJobPhase = .registering
+        lockScreenJobMessage = "Starting lock screen repair…"
+
+        if AerialLockScreenInstaller.isSupported {
+            let targetVideoURL: URL
+            let targetID: UUID
+            let targetTitle: String
+
+            if let videoURL, let wallpaperID, let title {
+                targetVideoURL = videoURL
+                targetID = wallpaperID
+                targetTitle = title
+            } else if let activeID = AppState.shared.store.lockScreenWallpaperID ?? AppState.shared.store.assignments.values.first?.wallpaperID,
+                      let (wp, resolved) = AppState.shared.wallpaperManager.wallpaperResolver?(activeID) {
+                targetVideoURL = resolved
+                targetID = wp.id
+                targetTitle = wp.title
+            } else if let bundleSample = Bundle.main.url(forResource: "SampleAmbient", withExtension: "mp4") {
+                targetVideoURL = bundleSample
+                targetID = UUID(uuidString: "00000000-0000-0000-0000-000000000001") ?? UUID()
+                targetTitle = "Live Show Ambient"
+            } else {
+                updateLockScreenJob(phase: .failed, message: "Repair failed: No wallpaper video available to install.")
+                return false
+            }
+
+            let (ok, msg) = await AerialLockScreenInstaller.shared.repairAerialPipeline(
+                videoURL: targetVideoURL,
+                wallpaperID: targetID,
+                title: targetTitle,
+                onProgress: { [weak self] message in
+                    Task { @MainActor in
+                        self?.updateLockScreenJob(phase: .registering, message: message)
+                    }
+                }
+            )
+
+            refreshReadiness()
+            updateLockScreenJob(phase: ok ? .done : .failed, message: msg)
+            return ok
+        } else {
+            _ = installScreenSaver(injectIntoIdle: true)
+            refreshReadiness()
+            let ok = readiness?.isReady ?? false
+            updateLockScreenJob(phase: ok ? .done : .failed, message: ok ? "Legacy screen saver repaired" : "Repair failed")
+            return ok
+        }
     }
 
     /// Full lock-screen sync with visible progress (Settings / Diagnostics / set-wallpaper).
     @discardableResult
-    public func performLockScreenSync(videoURL: URL, wallpaperID: UUID, title: String) async -> Bool {
+    public func performLockScreenSync(
+        videoURL: URL,
+        wallpaperID: UUID,
+        title: String,
+        target: AerialLockScreenInstaller.WallpaperTarget = .lockScreen
+    ) async -> Bool {
         guard !lockScreenJobPhase.isRunning else {
             lockScreenJobMessage = "Lock screen update already in progress…"
             return false
@@ -179,13 +245,13 @@ public final class ScreenSaverManager: ObservableObject {
         lockScreenJobMessage = "Encoding lock-screen video…"
 
         let useAerial = AerialLockScreenInstaller.isSupported
-        let ok = await Task.detached(priority: .userInitiated) { () -> Bool in
-            guard useAerial else { return true }
-            return AerialLockScreenInstaller.shared.install(
+        if useAerial {
+            let ok = await AerialLockScreenInstaller.shared.install(
                 videoURL: videoURL,
                 wallpaperID: wallpaperID,
                 title: title,
-                onProgress: { message in
+                target: target,
+                onProgress: { [weak self] message in
                     Task { @MainActor in
                         let lower = message.lowercased()
                         let phase: LockScreenJobPhase
@@ -200,41 +266,49 @@ public final class ScreenSaverManager: ObservableObject {
                         } else {
                             phase = .registering
                         }
-                        ScreenSaverManager.shared.updateLockScreenJob(phase: phase, message: message)
+                        self?.updateLockScreenJob(phase: phase, message: message)
                     }
                 }
             )
-        }.value
 
-        updateActiveWallpaperLink(videoURL: videoURL, injectSaverIntoIdle: !useAerial)
-        refreshReadiness()
+            updateActiveWallpaperLink(videoURL: videoURL, injectSaverIntoIdle: false)
+            refreshReadiness()
 
-        if useAerial {
             if ok {
                 lockScreenJobPhase = .done
-                lockScreenJobMessage = "Lock screen ready"
+                lockScreenJobMessage = target == .both ? "Home & Lock screen ready" : "Lock screen ready"
             } else {
                 lockScreenJobPhase = .failed
                 let detail = AerialLockScreenInstaller.shared.lastErrorDetail
                 lockScreenJobMessage = detail.isEmpty ? "Failed to prepare lock screen" : "Failed: \(detail)"
             }
+            return ok
         } else {
+            updateActiveWallpaperLink(videoURL: videoURL, injectSaverIntoIdle: true)
+            refreshReadiness()
+            let ok = readiness?.isReady ?? false
             lockScreenJobPhase = ok ? .done : .failed
             lockScreenJobMessage = ok ? "Lock screen ready (Screen Saver)" : "Failed to prepare Screen Saver"
+            return ok
         }
-        return ok
     }
 
     /// Syncs the active wallpaper to the lock-screen pipeline (Aerial on macOS 26+).
     @discardableResult
-    public func syncLockScreen(videoURL: URL, wallpaperID: UUID, title: String) -> Bool {
+    public func syncLockScreen(
+        videoURL: URL,
+        wallpaperID: UUID,
+        title: String,
+        target: AerialLockScreenInstaller.WallpaperTarget = .lockScreen
+    ) async -> Bool {
         updateActiveWallpaperLink(videoURL: videoURL, injectSaverIntoIdle: !AerialLockScreenInstaller.isSupported)
 
         if AerialLockScreenInstaller.isSupported {
-            let ok = AerialLockScreenInstaller.shared.install(
+            let ok = await AerialLockScreenInstaller.shared.install(
                 videoURL: videoURL,
                 wallpaperID: wallpaperID,
-                title: title
+                title: title,
+                target: target
             )
             refreshReadiness()
             return ok
@@ -358,6 +432,12 @@ public final class ScreenSaverManager: ObservableObject {
 
     /// Registers LiveWallpaper as the active screen saver in macOS preferences.
     public func registerAsSystemScreenSaver(injectIntoIdle: Bool = false) {
+        if AerialLockScreenInstaller.isSupported {
+            // macOS 26/27 uses native WallpaperAgent. Never write legacy moduleDict as it triggers Launch Constraint crashes.
+            AerialLockScreenInstaller.shared.purgeLegacyScreenSaverDefaults()
+            return
+        }
+
         let path = destinationURL.path
 
         // Write via `defaults` so cfprefsd picks it up correctly for the current host

@@ -52,9 +52,9 @@ public struct MenuBarView: View {
                 .buttonStyle(.bordered)
             }
 
-            // Displays overview
+            // Displays & Lock Screen overview
             VStack(alignment: .leading, spacing: 6) {
-                Text("Displays")
+                Text("Displays & Lock Screen")
                     .font(.caption)
                     .foregroundColor(.secondary)
 
@@ -81,6 +81,31 @@ public struct MenuBarView: View {
                     }
                     .padding(.vertical, 2)
                 }
+
+                Divider()
+                    .padding(.vertical, 2)
+
+                HStack {
+                    Image(systemName: "lock.fill")
+                        .foregroundColor(.secondary)
+                    Text("Lock Screen")
+                        .font(.system(size: 12))
+                        .lineLimit(1)
+                    Spacer()
+
+                    if let lockID = appState.store.lockScreenWallpaperID,
+                       let wp = appState.store.wallpapers.first(where: { $0.id == lockID }) {
+                        Text(wp.title)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(.accentColor)
+                            .lineLimit(1)
+                    } else {
+                        Text("Default / Unlinked")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(.vertical, 2)
             }
             .padding(8)
             .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.04)))

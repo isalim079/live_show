@@ -1,14 +1,14 @@
-# Live Show for Windows 10 & 11 (v1.4.0)
+# Live Show for Windows 10 & 11 (v1.5.0)
 
 High-performance live video wallpaper for Windows. Features per-monitor placement parity with macOS, dual-path shell embedding (supporting Windows 11 24H2+ raised desktop and classic WorkerW), PerMonitorV2 DPI awareness, crash logging, and a top-level Setup window.
 
 ## Share / install options
 
 ### A) Portable Single-File EXE / Zip
-- Standalone portable executable: `liveShow_v1.4.0.exe`
-- Portable archive: `liveShow_windows_v1.4.0.zip`
+- Standalone portable executable: `liveShow_v1.5.0.exe`
+- Portable archive: `liveShow_windows_v1.5.0.zip`
 
-1. Double-click `liveShow_v1.4.0.exe` (or extract `liveShow_windows_v1.4.0.zip` and run).
+1. Double-click `liveShow_v1.5.0.exe` (or extract `liveShow_windows_v1.5.0.zip` and run).
 2. If **SmartScreen** appears: Click **More info → Run anyway** (unsigned builds are normal without an enterprise Authenticode cert).
 3. On first launch, the **Setup & Settings** window appears to let you choose your video, configure multi-monitor settings, and opt into starting with Windows.
 4. Use the **system tray icon** (near the clock) for complete control:

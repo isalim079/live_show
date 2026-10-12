@@ -100,6 +100,20 @@ public struct SettingsView: View {
                     }
                 }
 
+                HStack {
+                    Text("Lock Screen Wallpaper")
+                    Spacer()
+                    if let lockID = appState.store.lockScreenWallpaperID,
+                       let wp = appState.store.wallpapers.first(where: { $0.id == lockID }) {
+                        Text(wp.title)
+                            .foregroundColor(.accentColor)
+                    } else {
+                        Text("None (Uses Home Screen or Default)")
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .font(.subheadline)
+
                 Button(action: repairLockScreen) {
                     Label("Repair Lock Screen Integration", systemImage: "wrench.and.screwdriver")
                 }
@@ -131,7 +145,7 @@ public struct SettingsView: View {
             } header: {
                 Text("Lock Screen & System Integration")
             } footer: {
-                Text("On macOS 27 Golden Gate, Live Show sets a native Aerial wallpaper for Desktop+Idle (like Wallper). Encoding can take 30–90 seconds — watch the status above. “Pause when screen is locked” only affects the desktop window, not Lock Screen video.")
+                Text("On macOS 27 Golden Gate, Live Show sets a native Aerial wallpaper for Desktop+Idle (like Wallper). Encoding can take 10–30 seconds — watch the status above. “Pause when screen is locked” only affects the desktop window, not Lock Screen video.")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -145,19 +159,26 @@ public struct SettingsView: View {
 
     private func repairLockScreen() {
         Task {
-            _ = ScreenSaverManager.shared.repairLockScreenIntegration()
-            guard let assignment = appState.store.assignments.values.first,
-                  let (wallpaper, url) = appState.wallpaperManager.wallpaperResolver?(assignment.wallpaperID) else {
-                ScreenSaverManager.shared.updateLockScreenJob(
-                    phase: .failed,
-                    message: "Failed: no active wallpaper to sync"
-                )
-                return
-            }
-            _ = await ScreenSaverManager.shared.performLockScreenSync(
-                videoURL: url,
-                wallpaperID: wallpaper.id,
-                title: wallpaper.title
+            let targetWallpaper: (Wallpaper, URL)? = {
+                if let lockID = appState.store.lockScreenWallpaperID,
+                   let resolved = appState.wallpaperManager.wallpaperResolver?(lockID) {
+                    return resolved
+                }
+                if let assignment = appState.store.assignments.values.first,
+                   let resolved = appState.wallpaperManager.wallpaperResolver?(assignment.wallpaperID) {
+                    return resolved
+                }
+                if let first = appState.store.wallpapers.first,
+                   let resolved = appState.wallpaperManager.wallpaperResolver?(first.id) {
+                    return resolved
+                }
+                return nil
+            }()
+
+            _ = await ScreenSaverManager.shared.repairLockScreenIntegration(
+                videoURL: targetWallpaper?.1,
+                wallpaperID: targetWallpaper?.0.id,
+                title: targetWallpaper?.0.title
             )
         }
     }

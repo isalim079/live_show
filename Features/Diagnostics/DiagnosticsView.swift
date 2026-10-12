@@ -88,6 +88,12 @@ public struct DiagnosticsView: View {
                             diagnosticRow(label: "Codesign", value: codesignLabel(r))
                             diagnosticRow(label: "Idle provider", value: idleLabel(r))
                         }
+                        if let lockID = appState.store.lockScreenWallpaperID,
+                           let wp = appState.store.wallpapers.first(where: { $0.id == lockID }) {
+                            diagnosticRow(label: "Assigned Wallpaper", value: wp.title)
+                        } else {
+                            diagnosticRow(label: "Assigned Wallpaper", value: "Default / Unlinked")
+                        }
                         diagnosticRow(label: "Detail", value: r?.idleDetail ?? "—")
 
                         if !screenSaverManager.lockScreenJobMessage.isEmpty {
@@ -205,19 +211,26 @@ public struct DiagnosticsView: View {
 
     private func repairLockScreen() {
         Task {
-            _ = ScreenSaverManager.shared.repairLockScreenIntegration()
-            guard let assignment = appState.store.assignments.values.first,
-                  let (wallpaper, url) = appState.wallpaperManager.wallpaperResolver?(assignment.wallpaperID) else {
-                ScreenSaverManager.shared.updateLockScreenJob(
-                    phase: .failed,
-                    message: "Failed: no active wallpaper to sync"
-                )
-                return
-            }
-            _ = await ScreenSaverManager.shared.performLockScreenSync(
-                videoURL: url,
-                wallpaperID: wallpaper.id,
-                title: wallpaper.title
+            let targetWallpaper: (Wallpaper, URL)? = {
+                if let lockID = appState.store.lockScreenWallpaperID,
+                   let resolved = appState.wallpaperManager.wallpaperResolver?(lockID) {
+                    return resolved
+                }
+                if let assignment = appState.store.assignments.values.first,
+                   let resolved = appState.wallpaperManager.wallpaperResolver?(assignment.wallpaperID) {
+                    return resolved
+                }
+                if let first = appState.store.wallpapers.first,
+                   let resolved = appState.wallpaperManager.wallpaperResolver?(first.id) {
+                    return resolved
+                }
+                return nil
+            }()
+
+            _ = await ScreenSaverManager.shared.repairLockScreenIntegration(
+                videoURL: targetWallpaper?.1,
+                wallpaperID: targetWallpaper?.0.id,
+                title: targetWallpaper?.0.title
             )
         }
     }

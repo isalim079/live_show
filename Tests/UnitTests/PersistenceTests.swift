@@ -86,4 +86,43 @@ final class PersistenceTests: XCTestCase {
         let fallbackMatch = store.assignment(for: "unknown-disp-999", displayName: "Unknown Screen")
         XCTAssertNotNil(fallbackMatch)
     }
+
+    @MainActor
+    func testLockScreenWallpaperPersistenceAndClearance() throws {
+        let store = WallpaperStore()
+        let lockID = UUID()
+
+        // 1. Initial state
+        XCTAssertNil(store.lockScreenWallpaperID)
+
+        // 2. Set Lock Screen Wallpaper
+        store.setLockScreenWallpaper(id: lockID)
+        XCTAssertEqual(store.lockScreenWallpaperID, lockID)
+
+        // 3. Round-trip serialization with lockScreenWallpaperID
+        let library = LibraryData(
+            version: 1,
+            wallpapers: [],
+            assignments: [:],
+            lockScreenWallpaperID: lockID
+        )
+        let data = try JSONEncoder().encode(library)
+        let decoded = try JSONDecoder().decode(LibraryData.self, from: data)
+        XCTAssertEqual(decoded.lockScreenWallpaperID, lockID)
+
+        // 4. Backward compatibility: JSON without lockScreenWallpaperID
+        let legacyJSON = "{\"version\":1,\"wallpapers\":[],\"assignments\":{}}".data(using: .utf8)!
+        let legacyDecoded = try JSONDecoder().decode(LibraryData.self, from: legacyJSON)
+        XCTAssertNil(legacyDecoded.lockScreenWallpaperID)
+
+        // 5. Explicit clear
+        store.clearLockScreenWallpaper()
+        XCTAssertNil(store.lockScreenWallpaperID)
+
+        // 6. Automatic clearance when removing wallpaper
+        store.setLockScreenWallpaper(id: lockID)
+        XCTAssertEqual(store.lockScreenWallpaperID, lockID)
+        store.removeWallpaper(id: lockID)
+        XCTAssertNil(store.lockScreenWallpaperID)
+    }
 }

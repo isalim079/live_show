@@ -62,8 +62,6 @@ public final class AppState: ObservableObject {
         self.wallpaperManager = wallpaperManager
 
         wireDependencies()
-        // Install or repair .saver when missing / codesign-invalid (silent lock-screen failures).
-        ScreenSaverManager.shared.ensureInstalled()
     }
 
     private func wireDependencies() {
@@ -182,7 +180,7 @@ public final class AppState: ObservableObject {
 
         wallpaperManager.reevaluatePolicy()
 
-        // Sync system static frames + native Aerial lock-screen asset for the primary wallpaper.
+        // Sync system static frames + native Aerial lock-screen asset.
         var primary: (Wallpaper, URL)?
         for display in displayManager.displays {
             if let assignment = store.assignment(for: display.id, displayName: display.name),
@@ -192,10 +190,23 @@ public final class AppState: ObservableObject {
                 if primary == nil { primary = (wallpaper, url) }
             }
         }
-        if let (wallpaper, url) = primary {
-            Task { await self.syncLockScreen(wallpaper: wallpaper, videoURL: url) }
+
+        var lockWallpaper: (Wallpaper, URL)?
+        if let lockID = store.lockScreenWallpaperID,
+           let (wp, url) = wallpaperManager.wallpaperResolver?(lockID) {
+            lockWallpaper = (wp, url)
+        } else if let (wp, url) = primary {
+            lockWallpaper = (wp, url)
+        }
+
+        if let (wallpaper, url) = lockWallpaper {
+            Task { await self.syncLockScreen(wallpaper: wallpaper, videoURL: url, target: .lockScreen) }
         } else {
             ScreenSaverManager.shared.refreshReadiness()
+        }
+
+        Task { @MainActor in
+            ScreenSaverManager.shared.ensureInstalled()
         }
 
         // Shared boot multi-pass recovery (0s / 1.5s / 3.0s / 8.0s)
@@ -207,23 +218,41 @@ public final class AppState: ObservableObject {
         wallpaperManager.userWantsPlay.toggle()
     }
 
-    public func setWallpaper(_ wallpaper: Wallpaper, forDisplayID displayID: String, scalingMode: ScalingMode = .fill) {
+    /// Sets wallpaper for Home Screen (Desktop) only. Does NOT overwrite Lock Screen.
+    public func setWallpaperForHomeScreen(_ wallpaper: Wallpaper, forDisplayID displayID: String? = nil, scalingMode: ScalingMode = .fill) {
         guard let resolvedURL = store.resolveURL(for: wallpaper) else {
             AppLogger.wallpaper.error("Cannot resolve URL for wallpaper \(wallpaper.title)")
             return
         }
 
-        let displayName = displayManager.displays.first(where: { $0.id == displayID })?.name ?? "Display \(displayID)"
-        store.setAssignment(wallpaperID: wallpaper.id, forDisplayID: displayID, displayName: displayName, scalingMode: scalingMode)
-        wallpaperManager.assignWallpaper(wallpaper, resolvedURL: resolvedURL, toDisplayID: displayID, scalingMode: scalingMode)
-
-        if let screen = displayManager.screen(for: displayID) {
-            SystemWallpaperSynchronizer.shared.sync(wallpaper: wallpaper, videoURL: resolvedURL, for: screen)
+        if let displayID = displayID {
+            let displayName = displayManager.displays.first(where: { $0.id == displayID })?.name ?? "Display \(displayID)"
+            store.setAssignment(wallpaperID: wallpaper.id, forDisplayID: displayID, displayName: displayName, scalingMode: scalingMode)
+            wallpaperManager.assignWallpaper(wallpaper, resolvedURL: resolvedURL, toDisplayID: displayID, scalingMode: scalingMode)
+            if let screen = displayManager.screen(for: displayID) {
+                SystemWallpaperSynchronizer.shared.sync(wallpaper: wallpaper, videoURL: resolvedURL, for: screen)
+            }
+        } else {
+            for display in displayManager.displays {
+                store.setAssignment(wallpaperID: wallpaper.id, forDisplayID: display.id, displayName: display.name, scalingMode: scalingMode)
+            }
+            wallpaperManager.assignWallpaperToAllDisplays(wallpaper, resolvedURL: resolvedURL, scalingMode: scalingMode)
+            SystemWallpaperSynchronizer.shared.syncAllScreens(wallpaper: wallpaper, videoURL: resolvedURL)
         }
-        Task { await self.syncLockScreen(wallpaper: wallpaper, videoURL: resolvedURL) }
     }
 
-    public func setWallpaperForAllDisplays(_ wallpaper: Wallpaper, scalingMode: ScalingMode = .fill) {
+    /// Sets wallpaper for Lock Screen only. Does NOT overwrite Desktop session.
+    public func setWallpaperForLockScreen(_ wallpaper: Wallpaper) {
+        guard let resolvedURL = store.resolveURL(for: wallpaper) else {
+            AppLogger.wallpaper.error("Cannot resolve URL for lock screen: \(wallpaper.title)")
+            return
+        }
+        store.setLockScreenWallpaper(id: wallpaper.id)
+        Task { await self.syncLockScreen(wallpaper: wallpaper, videoURL: resolvedURL, target: .lockScreen) }
+    }
+
+    /// Sets wallpaper for Both Home Screen (all displays) and Lock Screen.
+    public func setWallpaperForBoth(_ wallpaper: Wallpaper, scalingMode: ScalingMode = .fill) {
         guard let resolvedURL = store.resolveURL(for: wallpaper) else {
             AppLogger.wallpaper.error("Cannot resolve URL for wallpaper \(wallpaper.title)")
             return
@@ -234,24 +263,34 @@ public final class AppState: ObservableObject {
         }
         wallpaperManager.assignWallpaperToAllDisplays(wallpaper, resolvedURL: resolvedURL, scalingMode: scalingMode)
         SystemWallpaperSynchronizer.shared.syncAllScreens(wallpaper: wallpaper, videoURL: resolvedURL)
-        Task { await self.syncLockScreen(wallpaper: wallpaper, videoURL: resolvedURL) }
+
+        store.setLockScreenWallpaper(id: wallpaper.id)
+        Task { await self.syncLockScreen(wallpaper: wallpaper, videoURL: resolvedURL, target: .both) }
     }
 
-    /// Lock-screen only: encodes/installs Aerial (or Screen Saver) without changing desktop sessions.
+    public func setWallpaper(_ wallpaper: Wallpaper, forDisplayID displayID: String, scalingMode: ScalingMode = .fill) {
+        setWallpaperForHomeScreen(wallpaper, forDisplayID: displayID, scalingMode: scalingMode)
+    }
+
+    public func setWallpaperForAllDisplays(_ wallpaper: Wallpaper, scalingMode: ScalingMode = .fill) {
+        setWallpaperForHomeScreen(wallpaper, forDisplayID: nil, scalingMode: scalingMode)
+    }
+
     public func setLockScreen(_ wallpaper: Wallpaper) {
-        guard let resolvedURL = store.resolveURL(for: wallpaper) else {
-            AppLogger.wallpaper.error("Cannot resolve URL for lock screen: \(wallpaper.title)")
-            return
-        }
-        Task { await self.syncLockScreen(wallpaper: wallpaper, videoURL: resolvedURL) }
+        setWallpaperForLockScreen(wallpaper)
     }
 
     /// Encodes HEVC Aerial with visible progress, then refreshes Desktop+Idle diagnostics.
-    private func syncLockScreen(wallpaper: Wallpaper, videoURL: URL) async {
+    private func syncLockScreen(
+        wallpaper: Wallpaper,
+        videoURL: URL,
+        target: AerialLockScreenInstaller.WallpaperTarget = .lockScreen
+    ) async {
         let ok = await ScreenSaverManager.shared.performLockScreenSync(
             videoURL: videoURL,
             wallpaperID: wallpaper.id,
-            title: wallpaper.title
+            title: wallpaper.title,
+            target: target
         )
         if AerialLockScreenInstaller.isSupported && !ok {
             AppLogger.wallpaper.error("Lock screen Aerial sync failed for \(wallpaper.title)")

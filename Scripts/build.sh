@@ -115,11 +115,11 @@ if ! codesign --verify --deep --strict "$SAVER_INSTALL_DIR/LiveWallpaper.saver";
     echo "WARNING: Installed LiveWallpaper.saver failed codesign verify." >&2
 fi
 
-# Register as the active screen saver via defaults
-defaults -currentHost write com.apple.screensaver moduleDict -dict \
-  path "$SAVER_INSTALL_DIR/LiveWallpaper.saver" \
-  moduleName "LiveWallpaper" \
-  type 0
+# macOS 14/26/27 Golden Gate uses native Aerial wallpaper (com.apple.wallpaper) for Lock Screen.
+# Writing an ad-hoc .saver into com.apple.screensaver moduleDict causes ScreenSaverEngine
+# to crash on lock screen with a Launch Constraint Violation.
+# Ensure no stale/poisoned moduleDict is left registered.
+defaults -currentHost delete com.apple.screensaver moduleDict 2>/dev/null || true
 killall cfprefsd 2>/dev/null || true
 
 # 3. Detect Signing Identity
@@ -140,7 +140,7 @@ if [[ -z "$SIGN_IDENTITY" ]]; then
             echo "Found Keychain Development Identity: $DEV_CERT"
         else
             SIGN_IDENTITY="-"
-            echo "No Developer ID certificate found. Using production ad-hoc code signature (-s -) with Hardened Runtime."
+            echo "No Developer ID certificate found. Using ad-hoc code signature (-s -)."
         fi
     fi
 fi
@@ -149,12 +149,21 @@ fi
 echo "[4/5] Code signing with identity: $SIGN_IDENTITY..."
 ENTITLEMENTS="$ROOT_DIR/Resources/LiveWallpaper.entitlements"
 
-codesign --force --deep \
-    --options runtime \
-    --sign "$SIGN_IDENTITY" \
-    --entitlements "$ENTITLEMENTS" \
-    --timestamp=none \
-    "$APP_BUNDLE"
+if [[ "$SIGN_IDENTITY" != "-" ]]; then
+    # Only genuine Apple developer certs can use hardened runtime without Gatekeeper marking app damaged
+    codesign --force --deep \
+        --options runtime \
+        --sign "$SIGN_IDENTITY" \
+        --entitlements "$ENTITLEMENTS" \
+        --timestamp=none \
+        "$APP_BUNDLE"
+else
+    codesign --force --deep \
+        --sign "$SIGN_IDENTITY" \
+        --entitlements "$ENTITLEMENTS" \
+        --timestamp=none \
+        "$APP_BUNDLE"
+fi
 
 # 5. Verify Code Signature
 echo "[5/5] Verifying bundle code signature..."

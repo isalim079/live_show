@@ -8,11 +8,11 @@ import CoreVideo
 /// Required by WallpaperAerialsExtension on macOS 26/27 for unlock-ramp / lock playback.
 public enum AerialTemporalEncoder {
 
-    /// Cache generation — bump when encode policy changes so old short clips are not reused.
-    private static let cacheGeneration = "v2loop"
+    /// Cache generation — bump when encode policy changes so old clips are not reused.
+    private static let cacheGeneration = "v3loop"
 
-    /// Target total duration so WallpaperAerialsExtension does not freeze after a short loop.
-    private static let targetTotalSeconds: TimeInterval = 150
+    /// Target total duration so WallpaperAerialsExtension plays a smooth loop without long encode lag.
+    private static let targetTotalSeconds: TimeInterval = 45
     /// Max seconds taken from the source per loop pass.
     private static let maxSegmentSeconds: TimeInterval = 30
 
@@ -242,8 +242,18 @@ public enum AerialTemporalEncoder {
             }
 
             guard let input else { return }
-            while !input.isReadyForMoreMediaData {
+            var retries = 0
+            while !input.isReadyForMoreMediaData && retries < 2000 {
+                if let w = writer, w.status == .failed {
+                    failedMessage = w.error?.localizedDescription ?? "AVAssetWriter failed"
+                    return
+                }
                 usleep(500)
+                retries += 1
+            }
+            if retries >= 2000 {
+                failedMessage = "Timed out waiting for AVAssetWriterInput readiness"
+                return
             }
             if !input.append(sampleBuffer) {
                 failedMessage = writer?.error?.localizedDescription ?? "AVAssetWriterInput.append failed"

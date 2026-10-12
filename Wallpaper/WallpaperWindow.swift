@@ -4,18 +4,16 @@ import AppKit
 /// Dedicated native borderless window pinned to the macOS desktop level.
 /// Strictly implements Section 7 of the specification.
 public final class WallpaperWindow: NSWindow {
-    public var displayID: String
+    public var displayID: String = ""
 
-    public init(screen: NSScreen, displayID: String) {
-        self.displayID = displayID
-
-        super.init(
+    public convenience init(screen: NSScreen, displayID: String) {
+        self.init(
             contentRect: screen.frame,
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
         )
-
+        self.displayID = displayID
         configureDesktopBehavior(screen: screen)
     }
 
@@ -25,7 +23,6 @@ public final class WallpaperWindow: NSWindow {
         backing backingStoreType: NSWindow.BackingStoreType,
         defer flag: Bool
     ) {
-        self.displayID = ""
         super.init(
             contentRect: contentRect,
             styleMask: style,

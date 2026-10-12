@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 public struct LibraryView: View {
     @ObservedObject var appState: AppState = AppState.shared
     @ObservedObject var store: WallpaperStore = AppState.shared.store
+    @ObservedObject private var screenSaverManager = ScreenSaverManager.shared
 
     @State private var searchText: String = ""
     @State private var isTargetedForDrop: Bool = false
@@ -80,6 +81,24 @@ public struct LibraryView: View {
             .background(.regularMaterial)
 
             Divider()
+
+            // Live Lock Screen Job Banner
+            if screenSaverManager.lockScreenJobPhase.isRunning {
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(screenSaverManager.lockScreenJobMessage)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.primary)
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(Color.accentColor.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+            }
 
             // Content Area
             if filteredWallpapers.isEmpty {
@@ -219,6 +238,9 @@ struct WallpaperCard: View {
     let isActive: Bool
     @State private var isHovering = false
 
+    private var isHomeScreen: Bool { isActive }
+    private var isLockScreen: Bool { appState.store.lockScreenWallpaperID == wallpaper.id }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             // Thumbnail container
@@ -227,15 +249,35 @@ struct WallpaperCard: View {
                     .frame(height: 140)
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
-                // Active Pill (top-left)
-                if isActive {
-                    VStack {
-                        HStack {
+                // Status Badges (top-left)
+                VStack {
+                    HStack {
+                        if isHomeScreen && isLockScreen {
+                            HStack(spacing: 4) {
+                                Image(systemName: "sparkles")
+                                    .font(.system(size: 8))
+                                Text("HOME & LOCK")
+                                    .font(.system(size: 9, weight: .heavy))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(
+                                LinearGradient(
+                                    colors: [Color.green.opacity(0.85), Color.blue.opacity(0.85)],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                            .clipShape(Capsule())
+                            .overlay(Capsule().stroke(Color.white.opacity(0.3), lineWidth: 0.5))
+                            .padding(8)
+                        } else if isHomeScreen {
                             HStack(spacing: 4) {
                                 Circle()
                                     .fill(Color.green)
                                     .frame(width: 6, height: 6)
-                                Text("ACTIVE")
+                                Text("HOME SCREEN")
                                     .font(.system(size: 9, weight: .heavy))
                                     .foregroundColor(.white)
                             }
@@ -245,11 +287,26 @@ struct WallpaperCard: View {
                             .clipShape(Capsule())
                             .overlay(Capsule().stroke(Color.green.opacity(0.8), lineWidth: 1))
                             .padding(8)
-
-                            Spacer()
+                        } else if isLockScreen {
+                            HStack(spacing: 4) {
+                                Image(systemName: "lock.fill")
+                                    .font(.system(size: 7))
+                                    .foregroundColor(.white)
+                                Text("LOCK SCREEN")
+                                    .font(.system(size: 9, weight: .heavy))
+                                    .foregroundColor(.white)
+                            }
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(Color.indigo.opacity(0.85))
+                            .clipShape(Capsule())
+                            .overlay(Capsule().stroke(Color.white.opacity(0.3), lineWidth: 0.5))
+                            .padding(8)
                         }
+
                         Spacer()
                     }
+                    Spacer()
                 }
 
                 // Resolution Badge (top-right)
@@ -280,8 +337,8 @@ struct WallpaperCard: View {
             .frame(height: 140)
             .contentShape(Rectangle())
             .onTapGesture(count: 2) {
-                // Double click card to immediately set and apply
-                appState.setWallpaperForAllDisplays(wallpaper)
+                // Double click card to set as Home Screen
+                appState.setWallpaperForHomeScreen(wallpaper)
             }
 
             // Title and Details
@@ -297,53 +354,91 @@ struct WallpaperCard: View {
 
             // Action Buttons
             HStack(spacing: 6) {
-                // 1-Click Primary "Apply to Desktop" Button
-                Button(action: {
-                    appState.setWallpaperForAllDisplays(wallpaper)
-                }) {
-                    Label(isActive ? "Active" : "Apply", systemImage: isActive ? "checkmark.circle.fill" : "play.fill")
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(isActive ? Color.green : Color.accentColor)
-                .controlSize(.small)
+                // Primary Action: Dropdown Menu with separate Home Screen vs Lock Screen options
+                Menu {
+                    Section("Home Screen (Desktop)") {
+                        Button {
+                            appState.setWallpaperForHomeScreen(wallpaper)
+                        } label: {
+                            Label("Set for All Home Screens", systemImage: "display")
+                        }
 
-                // Optional multi-display selector if more than 1 display connected
-                if appState.displayManager.displays.count > 1 {
-                    Menu {
-                        ForEach(appState.displayManager.displays) { display in
-                            Button("Set on \(display.name)") {
-                                appState.setWallpaper(wallpaper, forDisplayID: display.id)
+                        if appState.displayManager.displays.count > 1 {
+                            ForEach(appState.displayManager.displays) { display in
+                                Button {
+                                    appState.setWallpaperForHomeScreen(wallpaper, forDisplayID: display.id)
+                                } label: {
+                                    Label("Set on \(display.name) Only", systemImage: display.isBuiltIn ? "laptopcomputer" : "display")
+                                }
                             }
                         }
-                    } label: {
-                        Image(systemName: "display")
-                            .font(.system(size: 11))
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+
+                    Section("Lock Screen") {
+                        Button {
+                            appState.setWallpaperForLockScreen(wallpaper)
+                        } label: {
+                            Label("Set for Lock Screen", systemImage: "lock.fill")
+                        }
+                        .disabled(screenSaverManager.lockScreenJobPhase.isRunning)
+                    }
+
+                    Section {
+                        Button {
+                            appState.setWallpaperForBoth(wallpaper)
+                        } label: {
+                            Label("Set for Both (Home & Lock Screen)", systemImage: "sparkles")
+                        }
+                        .disabled(screenSaverManager.lockScreenJobPhase.isRunning)
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: (isHomeScreen && isLockScreen) ? "sparkles" : (isHomeScreen ? "display" : (isLockScreen ? "lock.fill" : "play.fill")))
+                        Text(isHomeScreen && isLockScreen ? "Home & Lock" : (isHomeScreen ? "Home Screen" : (isLockScreen ? "Lock Screen" : "Set Wallpaper")))
+                            .font(.system(size: 11, weight: .medium))
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                    }
                 }
+                .buttonStyle(.borderedProminent)
+                .tint(isHomeScreen || isLockScreen ? Color.green : Color.accentColor)
+                .controlSize(.small)
 
                 Spacer()
 
                 // Context Actions
                 Menu {
-                    Button("Set to All Screens") {
-                        appState.setWallpaperForAllDisplays(wallpaper)
+                    Button {
+                        appState.setWallpaperForHomeScreen(wallpaper)
+                    } label: {
+                        Label("Set for Home Screen (All Displays)", systemImage: "display")
                     }
 
                     if appState.displayManager.displays.count > 1 {
                         ForEach(appState.displayManager.displays) { display in
-                            Button("Set on \(display.name) Only") {
-                                appState.setWallpaper(wallpaper, forDisplayID: display.id)
+                            Button {
+                                appState.setWallpaperForHomeScreen(wallpaper, forDisplayID: display.id)
+                            } label: {
+                                Label("Set on \(display.name) Only", systemImage: display.isBuiltIn ? "laptopcomputer" : "display")
                             }
                         }
                     }
 
-                    Button("Set to Lock Screen") {
-                        appState.setLockScreen(wallpaper)
+                    Button {
+                        appState.setWallpaperForLockScreen(wallpaper)
+                    } label: {
+                        Label("Set for Lock Screen", systemImage: "lock.fill")
                     }
                     .disabled(screenSaverManager.lockScreenJobPhase.isRunning)
+
+                    Button {
+                        appState.setWallpaperForBoth(wallpaper)
+                    } label: {
+                        Label("Set for Both (Home & Lock)", systemImage: "sparkles")
+                    }
+                    .disabled(screenSaverManager.lockScreenJobPhase.isRunning)
+
+                    Divider()
 
                     Button("Show in Finder") {
                         NSWorkspace.shared.activateFileViewerSelecting([wallpaper.fileURL])
@@ -370,7 +465,7 @@ struct WallpaperCard: View {
                 .fill(.regularMaterial)
                 .overlay(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(isActive ? Color.green.opacity(0.6) : (isHovering ? Color.accentColor.opacity(0.5) : Color.white.opacity(0.1)), lineWidth: isActive ? 2.0 : 1.5)
+                        .stroke((isHomeScreen && isLockScreen) ? Color.green.opacity(0.8) : (isHomeScreen ? Color.green.opacity(0.6) : (isLockScreen ? Color.indigo.opacity(0.6) : (isHovering ? Color.accentColor.opacity(0.5) : Color.white.opacity(0.1)))), lineWidth: (isHomeScreen || isLockScreen) ? 2.0 : 1.5)
                 )
         )
         .onHover { hovering in
