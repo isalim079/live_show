@@ -352,11 +352,49 @@ struct WallpaperCard: View {
                     .foregroundColor(.secondary)
             }
 
-            // Action Buttons
+            // Action Buttons: Direct 1-Click Home and Lock Controls + More Menu
             HStack(spacing: 6) {
-                // Primary Action: Dropdown Menu with separate Home Screen vs Lock Screen options
+                // 1-Click Set for Home Screen
+                Button {
+                    appState.setWallpaperForHomeScreen(wallpaper)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: isHomeScreen ? "checkmark.circle.fill" : "display")
+                        Text(isHomeScreen ? "Home" : "Set Home")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(isHomeScreen ? Color.green : Color.primary.opacity(0.08))
+                .foregroundColor(isHomeScreen ? .white : .primary)
+                .controlSize(.small)
+
+                // 1-Click Set for Lock Screen
+                Button {
+                    appState.setWallpaperForLockScreen(wallpaper)
+                } label: {
+                    HStack(spacing: 4) {
+                        if screenSaverManager.activeSyncingWallpaperID == wallpaper.id {
+                            ProgressView()
+                                .controlSize(.mini)
+                        } else {
+                            Image(systemName: isLockScreen ? "checkmark.circle.fill" : "lock.fill")
+                        }
+                        Text(isLockScreen ? "Lock" : "Set Lock")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(isLockScreen ? Color.indigo : Color.primary.opacity(0.08))
+                .foregroundColor(isLockScreen ? .white : .primary)
+                .disabled(screenSaverManager.lockScreenJobPhase.isRunning)
+                .controlSize(.small)
+
+                // Context Options (...)
                 Menu {
-                    Section("Home Screen (Desktop)") {
+                    Section("Home Screen") {
                         Button {
                             appState.setWallpaperForHomeScreen(wallpaper)
                         } label: {
@@ -391,52 +429,6 @@ struct WallpaperCard: View {
                         }
                         .disabled(screenSaverManager.lockScreenJobPhase.isRunning)
                     }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: (isHomeScreen && isLockScreen) ? "sparkles" : (isHomeScreen ? "display" : (isLockScreen ? "lock.fill" : "play.fill")))
-                        Text(isHomeScreen && isLockScreen ? "Home & Lock" : (isHomeScreen ? "Home Screen" : (isLockScreen ? "Lock Screen" : "Set Wallpaper")))
-                            .font(.system(size: 11, weight: .medium))
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 8, weight: .bold))
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(isHomeScreen || isLockScreen ? Color.green : Color.accentColor)
-                .controlSize(.small)
-
-                Spacer()
-
-                // Context Actions
-                Menu {
-                    Button {
-                        appState.setWallpaperForHomeScreen(wallpaper)
-                    } label: {
-                        Label("Set for Home Screen (All Displays)", systemImage: "display")
-                    }
-
-                    if appState.displayManager.displays.count > 1 {
-                        ForEach(appState.displayManager.displays) { display in
-                            Button {
-                                appState.setWallpaperForHomeScreen(wallpaper, forDisplayID: display.id)
-                            } label: {
-                                Label("Set on \(display.name) Only", systemImage: display.isBuiltIn ? "laptopcomputer" : "display")
-                            }
-                        }
-                    }
-
-                    Button {
-                        appState.setWallpaperForLockScreen(wallpaper)
-                    } label: {
-                        Label("Set for Lock Screen", systemImage: "lock.fill")
-                    }
-                    .disabled(screenSaverManager.lockScreenJobPhase.isRunning)
-
-                    Button {
-                        appState.setWallpaperForBoth(wallpaper)
-                    } label: {
-                        Label("Set for Both (Home & Lock)", systemImage: "sparkles")
-                    }
-                    .disabled(screenSaverManager.lockScreenJobPhase.isRunning)
 
                     Divider()
 
@@ -453,7 +445,8 @@ struct WallpaperCard: View {
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")
-                        .font(.system(size: 14))
+                        .font(.system(size: 15))
+                        .frame(width: 24, height: 24)
                 }
                 .buttonStyle(.plain)
                 .foregroundColor(.secondary)

@@ -7,6 +7,8 @@ public struct LockScreenReadiness: Equatable {
     public var usesAerialPipeline: Bool
     public var aerialAssetPresent: Bool
     public var aerialVideoPresent: Bool
+    public var linkedProviderOK: Bool = false
+    public var linkedAssetOK: Bool = false
     public var idleProviderOK: Bool
     public var idleAssetOK: Bool
     public var desktopProviderOK: Bool
@@ -20,8 +22,9 @@ public struct LockScreenReadiness: Equatable {
 
     public var isReady: Bool {
         if usesAerialPipeline {
-            return aerialAssetPresent && aerialVideoPresent
-                && idleProviderOK && idleAssetOK
+            return aerialAssetPresent && aerialVideoPresent && (
+                (linkedProviderOK && linkedAssetOK) || (idleProviderOK && idleAssetOK && desktopProviderOK && desktopAssetOK)
+            )
         }
         return saverInstalled && codesignOK && idleProviderOK
     }
@@ -29,7 +32,8 @@ public struct LockScreenReadiness: Equatable {
     public var summary: String {
         if isReady {
             if usesAerialPipeline {
-                return (desktopProviderOK && desktopAssetOK) ? "Ready (Home & Lock Screen)" : "Ready (Lock Screen Aerial)"
+                let both = (linkedProviderOK && linkedAssetOK) || (desktopProviderOK && desktopAssetOK && idleProviderOK && idleAssetOK)
+                return both ? "Ready (Home & Lock Screen)" : "Ready (Lock Screen Aerial)"
             }
             return "Ready"
         }
@@ -60,6 +64,7 @@ public final class ScreenSaverManager: ObservableObject {
     @Published public private(set) var readiness: LockScreenReadiness?
     @Published public private(set) var lockScreenJobPhase: LockScreenJobPhase = .idle
     @Published public private(set) var lockScreenJobMessage: String = ""
+    @Published public private(set) var activeSyncingWallpaperID: UUID? = nil
 
     public func updateLockScreenJob(phase: LockScreenJobPhase, message: String) {
         lockScreenJobPhase = phase
@@ -240,6 +245,9 @@ public final class ScreenSaverManager: ObservableObject {
             lockScreenJobMessage = "Lock screen update already in progress…"
             return false
         }
+
+        activeSyncingWallpaperID = wallpaperID
+        defer { activeSyncingWallpaperID = nil }
 
         lockScreenJobPhase = .encoding
         lockScreenJobMessage = "Encoding lock-screen video…"
@@ -663,6 +671,8 @@ public final class ScreenSaverManager: ObservableObject {
                 usesAerialPipeline: true,
                 aerialAssetPresent: aerial.assetPresent,
                 aerialVideoPresent: aerial.videoPresent,
+                linkedProviderOK: aerial.linkedProviderOK,
+                linkedAssetOK: aerial.linkedAssetOK,
                 idleProviderOK: aerial.idleProviderOK,
                 idleAssetOK: aerial.idleAssetOK,
                 desktopProviderOK: aerial.desktopProviderOK,
@@ -683,6 +693,8 @@ public final class ScreenSaverManager: ObservableObject {
                 usesAerialPipeline: false,
                 aerialAssetPresent: false,
                 aerialVideoPresent: false,
+                linkedProviderOK: false,
+                linkedAssetOK: false,
                 idleProviderOK: idleProviderOK,
                 idleAssetOK: idlePathOK,
                 desktopProviderOK: false,

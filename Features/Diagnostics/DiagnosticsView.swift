@@ -80,6 +80,7 @@ public struct DiagnosticsView: View {
                         if r?.usesAerialPipeline == true {
                             diagnosticRow(label: "Aerial asset", value: boolLabel(r?.aerialAssetPresent ?? false))
                             diagnosticRow(label: "Aerial video", value: boolLabel(r?.aerialVideoPresent ?? false))
+                            diagnosticRow(label: "Linked aerial", value: slotLabel(ok: r?.linkedProviderOK == true && r?.linkedAssetOK == true))
                             diagnosticRow(label: "Desktop aerial", value: slotLabel(ok: r?.desktopProviderOK == true && r?.desktopAssetOK == true))
                             diagnosticRow(label: "Idle aerial", value: slotLabel(ok: r?.idleProviderOK == true && r?.idleAssetOK == true))
                             diagnosticRow(label: "Asset ID", value: r?.aerialAssetID ?? "—")

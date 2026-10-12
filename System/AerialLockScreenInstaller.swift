@@ -187,6 +187,8 @@ public final class AerialLockScreenInstaller: @unchecked Sendable {
         public var supported: Bool
         public var assetPresent: Bool
         public var videoPresent: Bool
+        public var linkedProviderOK: Bool
+        public var linkedAssetOK: Bool
         public var idleProviderOK: Bool
         public var idleAssetOK: Bool
         public var desktopProviderOK: Bool
@@ -195,12 +197,13 @@ public final class AerialLockScreenInstaller: @unchecked Sendable {
         public var assetID: String?
 
         public var isReady: Bool {
-            supported && assetPresent && videoPresent
-                && idleProviderOK && idleAssetOK
+            supported && assetPresent && videoPresent && (
+                (linkedProviderOK && linkedAssetOK) || (idleProviderOK && idleAssetOK && desktopProviderOK && desktopAssetOK)
+            )
         }
 
         public var isBothReady: Bool {
-            isReady && desktopProviderOK && desktopAssetOK
+            isReady && ((linkedProviderOK && linkedAssetOK) || (desktopProviderOK && desktopAssetOK))
         }
 
         public var summary: String {
@@ -214,6 +217,7 @@ public final class AerialLockScreenInstaller: @unchecked Sendable {
         guard Self.isSupported else {
             return AerialReadiness(
                 supported: false, assetPresent: false, videoPresent: false,
+                linkedProviderOK: false, linkedAssetOK: false,
                 idleProviderOK: false, idleAssetOK: false,
                 desktopProviderOK: false, desktopAssetOK: false,
                 detail: "Requires macOS 26+", assetID: nil
@@ -224,6 +228,7 @@ public final class AerialLockScreenInstaller: @unchecked Sendable {
         guard let assetID else {
             return AerialReadiness(
                 supported: true, assetPresent: false, videoPresent: false,
+                linkedProviderOK: false, linkedAssetOK: false,
                 idleProviderOK: false, idleAssetOK: false,
                 desktopProviderOK: false, desktopAssetOK: false,
                 detail: "No Live Show aerial asset registered", assetID: nil
@@ -234,24 +239,28 @@ public final class AerialLockScreenInstaller: @unchecked Sendable {
             atPath: videosDir.appendingPathComponent("\(assetID).mov").path
         )
         let inCatalog = loadLiveShowAssetIDs().contains(assetID)
+        let linked = inspectSlot(named: "Linked", expectedAssetID: assetID)
         let idle = inspectSlot(named: "Idle", expectedAssetID: assetID)
         let desktop = inspectSlot(named: "Desktop", expectedAssetID: assetID)
 
         var parts: [String] = []
         if !inCatalog { parts.append("missing from entries.json") }
         if !videoOK { parts.append("video file missing") }
-        if !idle.providerOK { parts.append("Idle not aerials") }
-        else if !idle.assetOK { parts.append("Idle assetID mismatch") }
-        if !desktop.providerOK { parts.append("Desktop not aerials") }
-        else if !desktop.assetOK { parts.append("Desktop assetID mismatch") }
+        let lockOK = (linked.providerOK && linked.assetOK) || (idle.providerOK && idle.assetOK && desktop.providerOK && desktop.assetOK)
+        if !lockOK {
+            if !linked.providerOK && !idle.providerOK { parts.append("Lock slot not aerials") }
+            else if !linked.assetOK && !idle.assetOK { parts.append("Lock slot assetID mismatch") }
+        }
         let detail = parts.isEmpty
-            ? "Desktop+Idle → aerials \(assetID)"
+            ? "Linked+Desktop+Idle → aerials \(assetID)"
             : parts.joined(separator: "; ")
 
         return AerialReadiness(
             supported: true,
             assetPresent: inCatalog,
             videoPresent: videoOK,
+            linkedProviderOK: linked.providerOK,
+            linkedAssetOK: linked.assetOK,
             idleProviderOK: idle.providerOK,
             idleAssetOK: idle.assetOK,
             desktopProviderOK: desktop.providerOK,
@@ -441,14 +450,18 @@ public final class AerialLockScreenInstaller: @unchecked Sendable {
             switch target {
             case .homeScreen:
                 entry["Desktop"] = slotEntry
+                entry["Type"] = "individual"
                 updated += 1
-            case .lockScreen:
-                entry["Idle"] = slotEntry
-                updated += 1
-            case .both:
+            case .lockScreen, .both:
+                // On macOS 26/27, the Lock Screen displays the Aerial via Linked (or Desktop+Idle).
+                // Setting Linked, Desktop, and Idle with Type = "linked" ensures that regardless
+                // of whether macOS reads "Linked" or falls back to "Desktop"/"Idle",
+                // all slots point to the custom Aerial asset.
+                entry["Linked"] = slotEntry
                 entry["Desktop"] = slotEntry
                 entry["Idle"] = slotEntry
-                updated += 2
+                entry["Type"] = "linked"
+                updated += 3
             }
         }
 
@@ -495,10 +508,8 @@ public final class AerialLockScreenInstaller: @unchecked Sendable {
         let outXML = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
         try outXML.write(to: xmlURL, options: .atomic)
 
-        _ = try? run("/usr/bin/killall", ["-STOP", "WallpaperAgent"])
         try run("/usr/bin/plutil", ["-convert", "binary1", "-o", indexURL.path, xmlURL.path])
-        _ = try? run("/usr/bin/killall", ["-CONT", "WallpaperAgent"])
-        _ = try? run("/usr/bin/killall", ["-HUP", "WallpaperAgent"])
+        refreshWallpaperAgents()
 
         AppLogger.wallpaper.info("Patched \(updated) slot(s) for \(target.rawValue) → aerials \(assetID)")
     }
@@ -538,9 +549,13 @@ public final class AerialLockScreenInstaller: @unchecked Sendable {
 
     // MARK: - Agents
 
-    private func refreshWallpaperAgents() {
-        // Prefer gentle HUP; if needed, terminate Aerial extension so it respawns cleanly.
-        _ = try? run("/usr/bin/killall", ["-HUP", "WallpaperAgent"])
+    public func refreshWallpaperAgents() {
+        // Enforce local catalog override so macOS 26/27 WallpaperAerialsExtension loads local entries.json
+        _ = try? run("/usr/bin/defaults", ["write", "com.apple.wallpaper.aerial", "AerialManifestLocalPathOverride", "-string", entriesURL.path])
+        _ = try? run("/usr/bin/defaults", ["write", "com.apple.wallpaper.aerial", "AerialManifestForceLocal", "-bool", "true"])
+
+        // Terminate WallpaperAgent so launchd immediately restarts it, loading the new Index.plist from disk.
+        _ = try? run("/usr/bin/killall", ["WallpaperAgent"])
         _ = try? run("/usr/bin/killall", ["WallpaperAerialsExtension"])
         _ = try? run("/usr/bin/killall", ["WallpaperLegacyExtension"])
     }

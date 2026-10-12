@@ -37,8 +37,8 @@ public final class WallpaperStore: ObservableObject {
     private let settingsURL: URL
     private let backupLibraryURL: URL
 
-    public init() {
-        let appSupport = FileUtils.appSupportDirectory
+    public init(baseDirectory: URL? = nil) {
+        let appSupport = baseDirectory ?? FileUtils.appSupportDirectory
         self.libraryURL = appSupport.appendingPathComponent("library.json")
         self.settingsURL = appSupport.appendingPathComponent("settings.json")
         self.backupLibraryURL = appSupport.appendingPathComponent("library.json.bak")

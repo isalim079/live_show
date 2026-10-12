@@ -60,8 +60,12 @@ final class PersistenceTests: XCTestCase {
     }
 
     @MainActor
-    func testAssignmentFallbackAndRemapping() {
-        let store = WallpaperStore()
+    func testAssignmentFallbackAndRemapping() throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let store = WallpaperStore(baseDirectory: tempDir)
         let id = UUID()
         let oldDisplayID = "test-disp-1"
         let newDisplayID = "test-disp-2"
@@ -89,7 +93,11 @@ final class PersistenceTests: XCTestCase {
 
     @MainActor
     func testLockScreenWallpaperPersistenceAndClearance() throws {
-        let store = WallpaperStore()
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let store = WallpaperStore(baseDirectory: tempDir)
         let lockID = UUID()
 
         // 1. Initial state
@@ -124,5 +132,42 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(store.lockScreenWallpaperID, lockID)
         store.removeWallpaper(id: lockID)
         XCTAssertNil(store.lockScreenWallpaperID)
+    }
+
+    func testLockScreenReadinessCalculation() {
+        // 1. Linked slot satisfies lock screen readiness
+        var readiness = LockScreenReadiness(
+            usesAerialPipeline: true,
+            aerialAssetPresent: true,
+            aerialVideoPresent: true,
+            linkedProviderOK: true,
+            linkedAssetOK: true,
+            idleProviderOK: false,
+            idleAssetOK: false,
+            desktopProviderOK: false,
+            desktopAssetOK: false,
+            idleDetail: "Linked Aerial OK",
+            aerialAssetID: "TEST-ASSET-1",
+            saverInstalled: false,
+            codesignOK: true,
+            codesignDetail: "OK"
+        )
+        XCTAssertTrue(readiness.isReady)
+        XCTAssertEqual(readiness.summary, "Ready (Home & Lock Screen)")
+
+        // 2. Both Desktop + Idle matching also satisfies lock screen readiness
+        readiness.linkedProviderOK = false
+        readiness.linkedAssetOK = false
+        readiness.idleProviderOK = true
+        readiness.idleAssetOK = true
+        readiness.desktopProviderOK = true
+        readiness.desktopAssetOK = true
+        XCTAssertTrue(readiness.isReady)
+        XCTAssertEqual(readiness.summary, "Ready (Home & Lock Screen)")
+
+        // 3. Mismatched or missing assets fail readiness
+        readiness.idleAssetOK = false
+        XCTAssertFalse(readiness.isReady)
+        XCTAssertEqual(readiness.summary, "Needs attention")
     }
 }
